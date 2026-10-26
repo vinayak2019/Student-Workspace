@@ -11,13 +11,63 @@ import streamlit as st
 
 st.set_page_config(page_title='Bridges-2 Student Workspace', page_icon='🧪', layout='wide')
 
-LOGIN_HOST = os.getenv('B2_LOGIN_HOST', 'bridges2.psc.edu')
-DATA_HOST = os.getenv('B2_DATA_HOST', 'data.bridges2.psc.edu')
-ROOT_TEMPLATE = os.getenv('B2_WORKSPACE_ROOT', '/ocean/projects/PROJECT_ID/{username}')
-KNOWN_HOSTS = os.getenv('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
-MAX_UPLOAD_MB = int(os.getenv('B2_MAX_UPLOAD_MB', '100'))
-ALLOWED_PARTITIONS = [x.strip() for x in os.getenv('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
-MAX_DOWNLOAD_MB = int(os.getenv('B2_MAX_DOWNLOAD_MB', '100'))
+def config(name, default=None):
+    """Read Streamlit Community Cloud Secrets, then environment, then default."""
+    try:
+        value = st.secrets.get(name)
+        if value is not None:
+            return str(value)
+    except (FileNotFoundError, KeyError):
+        pass
+    return os.getenv(name, default)
+
+
+LOGIN_HOST = config('B2_LOGIN_HOST', 'bridges2.psc.edu')
+DATA_HOST = config('B2_DATA_HOST', 'data.bridges2.psc.edu')
+ROOT_TEMPLATE = config('B2_WORKSPACE_ROOT', '/ocean/projects/PROJECT_ID/{username}')
+KNOWN_HOSTS = config('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
+MAX_UPLOAD_MB = int(config('B2_MAX_UPLOAD_MB', '100'))
+ALLOWED_PARTITIONS = [x.strip() for x in config('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
+MAX_DOWNLOAD_MB = int(config('B2_MAX_DOWNLOAD_MB', '100'))
+
+
+def load_verified_host_keys(client):
+    """Use PSC_KNOWN_HOSTS from Cloud Secrets; fail closed if absent or malformed.
+
+    Host keys MUST be independently verified with PSC before adding to Secrets.
+    """
+    client.load_system_host_keys()
+    keys_text = config('PSC_KNOWN_HOSTS', '')
+    if keys_text and keys_text.strip():
+        keys = paramiko.HostKeys()
+        for raw in keys_text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                entry = paramiko.hostkeys.HostKeyEntry.from_line(line)
+                if entry is None or entry.key is None or not entry.hostnames:
+                    raise ValueError('invalid key entry')
+                for hostname in entry.hostnames:
+                    keys.add(hostname, entry.key.get_name(), entry.key)
+            except Exception as exc:
+                raise RuntimeError('PSC_KNOWN_HOSTS contains an invalid SSH host-key entry.') from exc
+        for host in (LOGIN_HOST, DATA_HOST):
+            if keys.lookup(host) is None:
+                raise RuntimeError(f'PSC_KNOWN_HOSTS is missing a verified key for {host}.')
+        for hostname, types in keys.items():
+            for algorithm, key in types.items():
+                client.get_host_keys().add(hostname, algorithm, key)
+    elif os.path.isfile(KNOWN_HOSTS):
+        client.load_host_keys(KNOWN_HOSTS)
+    else:
+        raise RuntimeError(
+            'SSH trust not configured. In share.streamlit.io open App Settings → Secrets '
+            'and add PSC_KNOWN_HOSTS containing the independently verified SSH host keys '
+            'for both bridges2.psc.edu and data.bridges2.psc.edu.'
+        )
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+
 
 st.markdown('''<style>
 .block-container {padding-top: 1.4rem;}
@@ -27,14 +77,15 @@ st.markdown('''<style>
 
 def connect(host, username, password):
     client = paramiko.SSHClient()
-    client.load_system_host_keys()
-    if os.path.isfile(KNOWN_HOSTS):
-        client.load_host_keys(KNOWN_HOSTS)
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    client.connect(hostname=host, username=username, password=password,
-                   look_for_keys=False, allow_agent=False, timeout=15,
-                   auth_timeout=25, banner_timeout=20)
-    return client
+    try:
+        load_verified_host_keys(client)
+        client.connect(hostname=host, username=username, password=password,
+                       look_for_keys=False, allow_agent=False, timeout=15,
+                       auth_timeout=25, banner_timeout=20)
+        return client
+    except Exception:
+        client.close()
+        raise
 
 
 def ssh_command(args, cwd=None):

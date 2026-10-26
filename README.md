@@ -32,3 +32,32 @@ The script's chosen partition is passed to `sbatch` and can override the partiti
 **Important**: PSC says transfers should use `data.bridges2.psc.edu` and be initiated from a machine outside the login nodes. Deploy this web app **outside Bridges-2 login nodes**. Do not run compute-intensive analyses on the Streamlit server or Bridges-2 login nodes.
 
 Documentation: https://www.psc.edu/resources/bridges-2/user-guide/
+
+
+## Streamlit Community Cloud (`share.streamlit.io`) configuration
+
+Deploy `app.py` from your GitHub repository. Open the app's **Settings → Secrets** and add:
+
+```toml
+B2_WORKSPACE_ROOT = "/ocean/projects/YOUR_PROJECT_GROUP/{username}"
+B2_LOGIN_HOST = "bridges2.psc.edu"
+B2_DATA_HOST = "data.bridges2.psc.edu"
+B2_PARTITIONS = "RM-shared,RM"
+PSC_KNOWN_HOSTS = """
+bridges2.psc.edu ssh-ed25519 REPLACE_WITH_VERIFIED_BASE64_PUBLIC_HOST_KEY
+ data.bridges2.psc.edu ssh-ed25519 REPLACE_WITH_VERIFIED_BASE64_PUBLIC_HOST_KEY
+"""
+```
+
+Remove the leading space before `data.bridges2.psc.edu` if copying the template.
+**The placeholders are not valid keys.** Obtain candidate host-key lines using
+`ssh-keyscan -t ed25519 bridges2.psc.edu data.bridges2.psc.edu` from a trusted
+machine; independently confirm the SHA256 fingerprints with PSC support before
+putting those lines in secrets. Never paste usernames, passwords, or private SSH
+keys into GitHub. Restart/reboot the app after saving Secrets.
+
+This release refuses unknown or mismatching SSH host keys. Network egress on
+TCP port 22 and PSC's SSH login policy must also allow Streamlit Community Cloud
+connections. Not every PSC authentication method works through password-only
+Paramiko; this is an MVP and **is not suitable for public class-wide deployment
+until the authentication/security model is approved by PSC and campus IT**.
