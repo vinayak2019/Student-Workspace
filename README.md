@@ -61,3 +61,18 @@ TCP port 22 and PSC's SSH login policy must also allow Streamlit Community Cloud
 connections. Not every PSC authentication method works through password-only
 Paramiko; this is an MVP and **is not suitable for public class-wide deployment
 until the authentication/security model is approved by PSC and campus IT**.
+
+## Desktop-style File Explorer
+
+The updated File Explorer has folder tiles, direct click-to-open navigation,
+project breadcrumbs, grid/list toggle, a folder-name filter, multi-file upload,
+folder creation, file preview, download, rename, and confirmation-gated file deletion.
+These operations are performed over SFTP against PSC's data-transfer host and
+are restricted to the configured root. A folder opens on one click rather than
+requiring a browser double-click. Folder deletion and drag-and-drop folder moves
+are intentionally not included.
+
+**Cloud update:** Replace `app.py` in your GitHub repository, retain the existing
+Streamlit secrets (especially the *verified* `PSC_KNOWN_HOSTS` entries), then
+reboot the application in share.streamlit.io. Python package requirements are
+unchanged. The application has not been integration-tested against a live PSC account.
