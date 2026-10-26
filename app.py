@@ -74,12 +74,27 @@ def load_verified_host_keys(client):
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
 
-st.markdown('''<style>
-.block-container {padding-top: 1.4rem;}
-[data-testid="stMetric"] {background: #f6f8fb; border-radius: 12px; padding: 10px;}
-[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 12px;}
-.stButton button {min-height: 2.6rem;}
-</style>''', unsafe_allow_html=True)
+st.markdown("""<style>
+/* Windows Explorer-inspired chrome, without boxed file icons. */
+[data-testid="stSidebar"], [data-testid="collapsedControl"] {display:none!important;}
+.block-container {padding-top:.85rem;max-width:1450px;padding-left:2rem;padding-right:2rem;}
+[data-testid="stAppViewContainer"] {background:#f8fafc;}
+[data-testid="stHeader"] {background:transparent;}
+h1 {font-size:1.65rem!important;font-weight:650!important;letter-spacing:-.025em;}
+h2,h3 {font-size:1.12rem!important;}
+.stButton button {border-radius:5px;min-height:2.3rem;}
+/* File/folder items: unboxed icon labels, subtle hover like Explorer. */
+[class*="st-key-tile_"] button {background:transparent!important;border:1px solid transparent!important;
+ box-shadow:none!important;color:#1f2937!important;min-height:64px!important;
+ justify-content:center!important;white-space:normal!important;text-align:center!important;
+ font-weight:450!important;padding:.65rem .3rem!important;}
+[class*="st-key-tile_"] button:hover {background:#e8f2fc!important;border-color:#c8e3fb!important;}
+[class*="st-key-tile_"] button[kind="primary"] {background:#dceefe!important;border-color:#a9d5fa!important;}
+[class*="st-key-tile_"] button p {overflow-wrap:anywhere;}
+[data-testid="stVerticalBlockBorderWrapper"] {border-radius:6px;}
+[data-testid="stPopover"] button {border-radius:5px;}
+[data-testid="stCaptionContainer"] {font-size:.76rem;}
+</style>""", unsafe_allow_html=True)
 
 
 def connect(host, username, password):
@@ -214,43 +229,104 @@ def _file_tile(entry, current, index):
                 st.rerun()
         except Exception as exc:
             show_error(exc)
-    st.caption('Folder' if directory else ('Symbolic link' if symlink else _human_size(entry.st_size)))
+    
+    if not directory:
+        st.caption('Shortcut' if symlink else _human_size(entry.st_size))
 
 
 def file_manager():
-    st.title('🗂️ My Bridges-2 Files')
     current = st.session_state.current
     root = st.session_state.root
     rel = posixpath.relpath(current, root)
     crumbs = [] if rel == '.' else rel.split('/')
-    st.caption('File explorer · Files remain on PSC Bridges-2 · Click a folder to open; click a file to select it')
 
-    toolbar = st.columns([1, 1, 1, 1, 4])
-    with toolbar[0]:
-        if st.button('⬆ Up', disabled=current == root, use_container_width=True):
+    header_left, header_right = st.columns([5, 2], vertical_alignment='center')
+    with header_left:
+        st.title('📁 Files')
+    with header_right:
+        st.caption('Bridges-2  •  ' + st.session_state.username)
+
+    buttons = st.columns([.8, .8, .8, 1.25, 1.4, 4.8], vertical_alignment='center')
+    with buttons[0]:
+        if st.button('← Back', disabled=current == root, use_container_width=True):
             _navigate(ensure_within_root(posixpath.dirname(current)))
-    with toolbar[1]:
-        if st.button('🏠 Home', use_container_width=True):
+    with buttons[1]:
+        if st.button('⌂ Home', use_container_width=True):
             _navigate(root)
-    with toolbar[2]:
-        if st.button('🔄 Reload', use_container_width=True):
+    with buttons[2]:
+        if st.button('↻', use_container_width=True, help='Refresh'):
             st.rerun()
-    with toolbar[3]:
-        st.toggle('📋 List', key='explorer_list', help='Switch between grid tiles and a file list')
-    with toolbar[4]:
-        st.text_input('Current remote directory', value=current, disabled=True, label_visibility='collapsed')
+    with buttons[3]:
+        st.toggle('List view', key='explorer_list')
+    with buttons[4]:
+        with st.popover('⚡ Actions', use_container_width=True):
+            st.markdown('**Files & folders**')
+            with st.expander('📁 New folder', expanded=False):
+                with st.form(f'mkdir_{current}', clear_on_submit=True):
+                    folder = st.text_input('Folder name')
+                    if st.form_submit_button('Create folder', use_container_width=True):
+                        try:
+                            path = safe_child(current, folder)
+                            ssh, sftp = sftp_connection()
+                            try:
+                                checked_new_path(sftp, path)
+                                sftp.mkdir(path)
+                            finally:
+                                sftp.close(); ssh.close()
+                            st.rerun()
+                        except Exception as exc:
+                            show_error(exc)
+            
+            with st.expander('⬆️ Upload files', expanded=False):
+                uploads = st.file_uploader('Choose files', accept_multiple_files=True,
+                                           key=f'upload_{current}')
+                if st.button('Upload selected', use_container_width=True, disabled=not uploads):
+                    try:
+                        ssh, sftp = sftp_connection()
+                        try:
+                            checked_remote_path(sftp, current)
+                            for upload in uploads:
+                                if upload.size > MAX_UPLOAD_MB * 1024 * 1024:
+                                    raise ValueError(f'{upload.name} is larger than {MAX_UPLOAD_MB} MB.')
+                                path = safe_child(current, upload.name)
+                                checked_new_path(sftp, path)
+                                # Avoid overwriting preexisting files silently.
+                                with sftp.open(path, 'xb') as remote:
+                                    upload.seek(0)
+                                    while chunk := upload.read(1024 * 1024):
+                                        remote.write(chunk)
+                        finally:
+                            sftp.close(); ssh.close()
+                        st.success('Upload complete.')
+                        st.rerun()
+                    except Exception as exc:
+                        show_error(exc)
+            
+            st.divider()
+            st.markdown('**Workspace**')
+            for label, page in [('🚀 Submit simulation', 'Submit Simulation'),
+                                ('📊 Job monitor', 'Job Monitor'),
+                                ('📄 Job logs', 'Job Logs'),
+                                ('⚙️ Account', 'Account')]:
+                if st.button(label, key='action_' + page, use_container_width=True):
+                    st.session_state.view = page
+                    st.rerun()
+            if st.button('🚪 Log out', use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+    with buttons[5]:
+        st.text_input('Search', key='explorer_search', placeholder='🔎 Search files', label_visibility='collapsed')
 
-    # Clickable breadcrumbs never expose filesystem locations outside the project root.
+    # Breadcrumbs are the familiar Explorer address bar.
     breadcrumb_cols = st.columns(min(8, len(crumbs) + 1))
     with breadcrumb_cols[0]:
-        if st.button('🏠 Project', key='crumb_root'):
+        if st.button('This PC  ›  Project', key='crumb_root'):
             _navigate(root)
     for i, part in enumerate(crumbs[:7]):
         with breadcrumb_cols[min(i+1, len(breadcrumb_cols)-1)]:
-            if st.button(f'› {part}', key=f'crumb_{i}'):
+            if st.button('› ' + part, key=f'crumb_{i}'):
                 _navigate(ensure_within_root(posixpath.join(root, *crumbs[:i+1])))
-    if len(crumbs) > 7:
-        st.caption('Deeper path shown in directory bar above.')
 
     try:
         ssh, sftp = sftp_connection()
@@ -264,154 +340,116 @@ def file_manager():
         show_error(exc)
         return
 
-    folders = [a for a in attrs if stat.S_ISDIR(a.st_mode)]
-    files = [a for a in attrs if not stat.S_ISDIR(a.st_mode)]
-    search = st.text_input('🔎 Search this folder', placeholder='Filter folders and files by name')
+    search = st.session_state.get('explorer_search', '')
     if search:
         attrs = [a for a in attrs if search.casefold() in a.filename.casefold()]
-    st.caption(f'{len(folders)} folders · {len(files)} files · {len(attrs)} visible')
+    nfolders = sum(stat.S_ISDIR(a.st_mode) for a in attrs)
+    st.caption(f'{len(attrs)} items  •  {nfolders} folders')
 
-    left, right = st.columns([3.3, 1.5], gap='large')
-    with left:
-        if not attrs:
-            st.info('This directory is empty, or no files match your search.')
-        elif st.session_state.get('explorer_list', False):
-            for idx, entry in enumerate(attrs):
-                one, two, three = st.columns([5, 2, 2])
-                with one:
-                    _file_tile(entry, current, idx)
-                with two:
-                    st.caption(datetime.fromtimestamp(entry.st_mtime).strftime('%b %d, %Y'))
-                with three:
-                    st.caption('Directory' if stat.S_ISDIR(entry.st_mode) else _human_size(entry.st_size))
-                st.divider()
-        else:
-            for start in range(0, len(attrs), 4):
-                columns = st.columns(4)
-                for column, index in zip(columns, range(start, min(start+4, len(attrs)))):
-                    with column:
-                        with st.container(border=True):
-                            _file_tile(attrs[index], current, index)
+    if not attrs:
+        st.info('No items to display.')
+    elif st.session_state.get('explorer_list', False):
+        header = st.columns([6, 2, 1.4])
+        header[0].caption('Name')
+        header[1].caption('Date modified')
+        header[2].caption('Size')
+        st.divider()
+        for idx, entry in enumerate(attrs):
+            one, two, three = st.columns([6, 2, 1.4], vertical_alignment='center')
+            with one:
+                _file_tile(entry, current, idx)
+            with two:
+                st.caption(datetime.fromtimestamp(entry.st_mtime).strftime('%b %d, %Y'))
+            with three:
+                st.caption('' if stat.S_ISDIR(entry.st_mode) else _human_size(entry.st_size))
+    else:
+        for start in range(0, len(attrs), 6):
+            columns = st.columns(6)
+            for column, index in zip(columns, range(start, min(start+6, len(attrs)))):
+                with column:
+                    _file_tile(attrs[index], current, index)
 
-    with right:
-        st.subheader('Actions')
-        with st.expander('📁 New folder', expanded=False):
-            with st.form(f'mkdir_{current}', clear_on_submit=True):
-                folder = st.text_input('Folder name')
-                if st.form_submit_button('Create folder', use_container_width=True):
-                    try:
-                        path = safe_child(current, folder)
-                        ssh, sftp = sftp_connection()
-                        try:
-                            checked_new_path(sftp, path)
-                            sftp.mkdir(path)
-                        finally:
-                            sftp.close(); ssh.close()
-                        st.rerun()
-                    except Exception as exc:
-                        show_error(exc)
+    selected = st.session_state.get('selected_item')
+    item = next((a for a in attrs if a.filename == selected), None)
+    if item is not None and not stat.S_ISDIR(item.st_mode):
+        st.divider()
+        st.markdown('**Selected file**')
+        file_actions(item, current)
 
-        with st.expander('⬆️ Upload files', expanded=False):
-            uploads = st.file_uploader('Choose files', accept_multiple_files=True,
-                                       key=f'upload_{current}')
-            if st.button('Upload selected', use_container_width=True, disabled=not uploads):
-                try:
+
+def file_actions(item, current):
+    selected = item.filename
+    path = safe_child(current, selected)
+    st.markdown(f'**Selected:** `{selected}`')
+    st.caption(f'Size: {_human_size(item.st_size)} · Modified: '
+               + datetime.fromtimestamp(item.st_mtime).strftime('%Y-%m-%d %H:%M'))
+    # Links are not offered for download or editing to avoid symlink escapes.
+    if stat.S_ISLNK(item.st_mode):
+        st.warning('Symbolic link selected. Link editing is not available.')
+        return
+    if st.button('👁 Preview', use_container_width=True):
+        st.session_state.preview_path = path
+    if st.session_state.get('preview_path') == path:
+        try:
+            editor_preview(path)
+        except Exception as exc:
+            show_error(exc)
+    if item.st_size <= MAX_DOWNLOAD_MB * 1024 * 1024:
+        try:
+            ssh, sftp = sftp_connection()
+            try:
+                checked_remote_path(sftp, path)
+                with sftp.open(path, 'rb') as f:
+                    contents = f.read(MAX_DOWNLOAD_MB * 1024 * 1024 + 1)
+            finally:
+                sftp.close(); ssh.close()
+            st.download_button('⬇ Download', contents, file_name=selected,
+                               use_container_width=True)
+        except Exception as exc:
+            show_error(exc)
+    else:
+        st.warning(f'Download exceeds {MAX_DOWNLOAD_MB} MB browser limit.')
+
+    with st.expander('✏️ Rename'):
+        new_name = st.text_input('New file name', value=selected, key=f'rename_{current}_{selected}')
+        if st.button('Rename file', key=f'do_rename_{current}_{selected}'):
+            try:
+                new_path = safe_child(current, new_name)
+                if new_path == path:
+                    st.info('File name is unchanged.')
+                else:
                     ssh, sftp = sftp_connection()
                     try:
-                        checked_remote_path(sftp, current)
-                        for upload in uploads:
-                            if upload.size > MAX_UPLOAD_MB * 1024 * 1024:
-                                raise ValueError(f'{upload.name} is larger than {MAX_UPLOAD_MB} MB.')
-                            path = safe_child(current, upload.name)
-                            checked_new_path(sftp, path)
-                            # Avoid overwriting preexisting files silently.
-                            with sftp.open(path, 'xb') as remote:
-                                upload.seek(0)
-                                while chunk := upload.read(1024 * 1024):
-                                    remote.write(chunk)
+                        checked_remote_path(sftp, path)
+                        checked_new_path(sftp, new_path)
+                        try:
+                            sftp.lstat(new_path)
+                            raise FileExistsError('Destination already exists.')
+                        except FileNotFoundError:
+                            pass
+                        sftp.rename(path, new_path)
                     finally:
                         sftp.close(); ssh.close()
-                    st.success('Upload complete.')
+                    st.session_state.selected_item = new_name
                     st.rerun()
-                except Exception as exc:
-                    show_error(exc)
-
-        selected = st.session_state.get('selected_item')
-        item = next((a for a in attrs if a.filename == selected), None)
-        if item is None or stat.S_ISDIR(item.st_mode):
-            st.info('Choose a file tile to preview, download, or rename it. Select a folder tile to open it.')
-            return
-        path = safe_child(current, selected)
-        st.markdown(f'**Selected:** `{selected}`')
-        st.caption(f'Size: {_human_size(item.st_size)} · Modified: '
-                   + datetime.fromtimestamp(item.st_mtime).strftime('%Y-%m-%d %H:%M'))
-        # Links are not offered for download or editing to avoid symlink escapes.
-        if stat.S_ISLNK(item.st_mode):
-            st.warning('Symbolic link selected. Link editing is not available.')
-            return
-        if st.button('👁 Preview', use_container_width=True):
-            st.session_state.preview_path = path
-        if st.session_state.get('preview_path') == path:
-            try:
-                editor_preview(path)
             except Exception as exc:
                 show_error(exc)
-        if item.st_size <= MAX_DOWNLOAD_MB * 1024 * 1024:
+
+    with st.expander('🗑 Delete file'):
+        st.warning('Deleting a file from PSC cannot be undone here.')
+        confirmed = st.checkbox(f'I want to permanently delete {selected}', key=f'confirm_{current}_{selected}')
+        if st.button('Delete selected file', disabled=not confirmed, type='secondary'):
             try:
                 ssh, sftp = sftp_connection()
                 try:
                     checked_remote_path(sftp, path)
-                    with sftp.open(path, 'rb') as f:
-                        contents = f.read(MAX_DOWNLOAD_MB * 1024 * 1024 + 1)
+                    sftp.remove(path)
                 finally:
                     sftp.close(); ssh.close()
-                st.download_button('⬇ Download', contents, file_name=selected,
-                                   use_container_width=True)
+                st.session_state.selected_item = None
+                st.rerun()
             except Exception as exc:
                 show_error(exc)
-        else:
-            st.warning(f'Download exceeds {MAX_DOWNLOAD_MB} MB browser limit.')
-
-        with st.expander('✏️ Rename'):
-            new_name = st.text_input('New file name', value=selected, key=f'rename_{current}_{selected}')
-            if st.button('Rename file', key=f'do_rename_{current}_{selected}'):
-                try:
-                    new_path = safe_child(current, new_name)
-                    if new_path == path:
-                        st.info('File name is unchanged.')
-                    else:
-                        ssh, sftp = sftp_connection()
-                        try:
-                            checked_remote_path(sftp, path)
-                            checked_new_path(sftp, new_path)
-                            try:
-                                sftp.lstat(new_path)
-                                raise FileExistsError('Destination already exists.')
-                            except FileNotFoundError:
-                                pass
-                            sftp.rename(path, new_path)
-                        finally:
-                            sftp.close(); ssh.close()
-                        st.session_state.selected_item = new_name
-                        st.rerun()
-                except Exception as exc:
-                    show_error(exc)
-
-        with st.expander('🗑 Delete file'):
-            st.warning('Deleting a file from PSC cannot be undone here.')
-            confirmed = st.checkbox(f'I want to permanently delete {selected}', key=f'confirm_{current}_{selected}')
-            if st.button('Delete selected file', disabled=not confirmed, type='secondary'):
-                try:
-                    ssh, sftp = sftp_connection()
-                    try:
-                        checked_remote_path(sftp, path)
-                        sftp.remove(path)
-                    finally:
-                        sftp.close(); ssh.close()
-                    st.session_state.selected_item = None
-                    st.rerun()
-                except Exception as exc:
-                    show_error(exc)
 
 
 def submit_job():
@@ -488,7 +526,7 @@ def jobs_page():
 
 def logs_page():
     st.subheader('📄 Job Logs')
-    st.caption('Browse output and error files in your current workspace directory; navigate folders in File Explorer.')
+    st.caption('Browse output and error files from Files.')
     try:
         ssh, sftp = sftp_connection()
         try:
@@ -561,15 +599,26 @@ if 'username' not in st.session_state:
     login_screen()
     st.stop()
 
-with st.sidebar:
-    st.title('🧪 Bridges-2')
-    st.write(f'User: **{st.session_state.username}**')
-    view = st.radio('Workspace', ['File Explorer', 'Submit Simulation', 'Job Monitor', 'Job Logs', 'Account'])
-    st.divider()
-    if st.button('Log out'):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+# Page navigation lives in the Windows-style Actions menu instead of a sidebar.
+view = st.session_state.get('view', 'File Explorer')
+if view != 'File Explorer':
+    nav = st.columns([2, 2, 6], vertical_alignment='center')
+    with nav[0]:
+        if st.button('← Files', use_container_width=True):
+            st.session_state.view = 'File Explorer'
+            st.rerun()
+    with nav[1]:
+        with st.popover('⚡ Actions', use_container_width=True):
+            for label, page in [('📁 Files', 'File Explorer'), ('🚀 Submit simulation', 'Submit Simulation'),
+                                ('📊 Job monitor', 'Job Monitor'), ('📄 Job logs', 'Job Logs'),
+                                ('⚙️ Account', 'Account')]:
+                if st.button(label, key='nav_' + page, use_container_width=True):
+                    st.session_state.view = page
+                    st.rerun()
+            if st.button('🚪 Log out', key='nav_logout'):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
 
 if view == 'File Explorer':
     file_manager()
@@ -580,7 +629,7 @@ elif view == 'Job Monitor':
 elif view == 'Job Logs':
     logs_page()
 else:
-    st.subheader('⚙️ Workspace')
+    st.subheader('⚙️ Account')
     st.write('PSC username:', st.session_state.username)
     st.write('Login host:', LOGIN_HOST)
     st.write('Data transfer host:', DATA_HOST)
