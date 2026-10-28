@@ -95,10 +95,18 @@ h2,h3 {font-size:1.12rem!important;}
  font-size:var(--explorer-icon-size, 5rem)!important;
  line-height:1.08!important;flex-shrink:0!important;
 }
-[class*="st-key-folder_"] button::before {content:"📁";}
-[class*="st-key-link_"] button::before {content:"🔗";}
-[class*="st-key-log_"] button::before {content:"📜";}
-[class*="st-key-job_"] button::before {content:"🚀";}
+/* Specificity matches the actual Streamlit container key: tile_<kind>_<index>. */
+[class*="st-key-tile_folder_"] button::before {content:"📁";}
+[class*="st-key-tile_link_"] button::before {content:"🔗";}
+[class*="st-key-tile_job_"] button::before {content:"⚙️";}
+[class*="st-key-tile_log_"] button::before {content:"📜";}
+[class*="st-key-tile_python_"] button::before {content:"🐍";}
+[class*="st-key-tile_input_"] button::before {content:"🧪";}
+[class*="st-key-tile_data_"] button::before {content:"📊";}
+[class*="st-key-tile_image_"] button::before {content:"🖼️";}
+[class*="st-key-tile_archive_"] button::before {content:"🗜️";}
+[class*="st-key-tile_pdf_"] button::before {content:"📕";}
+[class*="st-key-tile_text_"] button::before {content:"📝";}
 [class*="st-key-tile_"] button:hover {background:#e8f2fc!important;border-color:#c8e3fb!important;}
 [class*="st-key-tile_"] button[kind="primary"] {background:#dceefe!important;border-color:#a9d5fa!important;}
 [class*="st-key-tile_"] button p {overflow-wrap:anywhere;white-space:normal!important;
@@ -263,9 +271,31 @@ def _file_tile(entry, current, index):
     directory = stat.S_ISDIR(entry.st_mode)
     symlink = stat.S_ISLNK(entry.st_mode)
     selected = st.session_state.get('selected_item') == name
-    kind = ('folder' if directory else 'link' if symlink else
-            'job' if name.endswith(('.sbatch', '.slurm', '.job')) else
-            'log' if name.endswith(('.out', '.err', '.log')) else 'file')
+    extension = posixpath.splitext(name.lower())[1]
+    if directory:
+        kind = 'folder'
+    elif symlink:
+        kind = 'link'
+    elif extension in ('.sbatch', '.slurm', '.job'):
+        kind = 'job'
+    elif extension in ('.out', '.err', '.log', '.stderr', '.stdout'):
+        kind = 'log'
+    elif extension in ('.py', '.ipynb'):
+        kind = 'python'
+    elif extension in ('.in', '.inp', '.xyz', '.cif', '.pdb', '.mol', '.mol2'):
+        kind = 'input'
+    elif extension in ('.csv', '.tsv', '.json', '.xml', '.dat', '.h5', '.hdf5', '.xlsx'):
+        kind = 'data'
+    elif extension in ('.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'):
+        kind = 'image'
+    elif extension in ('.zip', '.tar', '.gz', '.bz2', '.7z'):
+        kind = 'archive'
+    elif extension == '.pdf':
+        kind = 'pdf'
+    elif extension in ('.txt', '.md', '.rst'):
+        kind = 'text'
+    else:
+        kind = 'file'
     # CSS draws the icon separately from the label, so icon size scales correctly.
     with st.container(key=f'tile_{kind}_{index}'):
         if st.button(name, key=f'file_button_{current}_{index}',
