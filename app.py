@@ -76,14 +76,30 @@ def remember_login(username, password, root):
                             expires=datetime.now() + timedelta(seconds=REMEMBER_SECONDS),
                             secure=True, same_site='strict', path='/')
     st.session_state['_b2_remember_token'] = token
+    # Allow the cookie component to finish its browser-side write before rerun.
+    time.sleep(0.7)
+
+
+def _browser_remember_token():
+    """Prefer request cookies, available immediately after a full refresh.
+
+    The cookie component may not be initialized on the first Streamlit run,
+    so calling its get() alone can wrongly show the login screen.
+    """
+    try:
+        token = st.context.cookies.get(REMEMBER_COOKIE)
+        if isinstance(token, str) and token:
+            return token
+    except (AttributeError, KeyError, TypeError):
+        pass
+    try:
+        return cookie_controller().get(REMEMBER_COOKIE)
+    except Exception:
+        return None
 
 
 def restore_login():
-    # Cookie component can return None on its first render; no login is inferred.
-    try:
-        token = cookie_controller().get(REMEMBER_COOKIE)
-    except Exception:
-        return False
+    token = _browser_remember_token()
     if not isinstance(token, str) or len(token) < 32:
         return False
     key = hashlib.sha256(token.encode('ascii')).hexdigest()
@@ -107,10 +123,7 @@ def restore_login():
 def logout_user():
     token = st.session_state.get('_b2_remember_token')
     if not token:
-        try:
-            token = cookie_controller().get(REMEMBER_COOKIE)
-        except Exception:
-            pass
+        token = _browser_remember_token()
     if isinstance(token, str):
         key = hashlib.sha256(token.encode('ascii')).hexdigest()
         vault = credential_vault()
@@ -819,6 +832,8 @@ def login_screen():
 
 if 'username' not in st.session_state:
     if not restore_login():
+        if _browser_remember_token():
+            st.info('Your saved sign-in cannot be restored. The four-hour period may have expired, or the Streamlit Cloud app may have restarted. Please sign in again.')
         login_screen()
         st.stop()
 
