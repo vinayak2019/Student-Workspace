@@ -4,10 +4,16 @@ import posixpath
 import re
 import shlex
 import stat
+import secrets
+import threading
+import time
+import hashlib
+from datetime import timedelta
 from datetime import datetime
 
 import paramiko
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 
 from molecule_viewer import MOLECULE_EXTENSIONS, render_molecule_viewer
 from molecule_builder import molecule_builder_page
@@ -32,6 +38,91 @@ KNOWN_HOSTS = config('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
 MAX_UPLOAD_MB = int(config('B2_MAX_UPLOAD_MB', '100'))
 ALLOWED_PARTITIONS = [x.strip() for x in config('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
 MAX_DOWNLOAD_MB = int(config('B2_MAX_DOWNLOAD_MB', '100'))
+
+# An opt-in, short-lived browser token restores a session after a hard refresh.
+# PSC credentials are NEVER stored in browser cookies; only in server process
+# memory. A Streamlit Cloud process restart invalidates all remembered logins.
+REMEMBER_SECONDS = 4 * 60 * 60
+REMEMBER_COOKIE = 'b2_workspace_session'
+
+@st.cache_resource
+def credential_vault():
+    return {'lock': threading.RLock(), 'entries': {}}
+
+
+def cookie_controller():
+    # Do not cache globally: the component must remain scoped to this browser.
+    if '_b2_cookie_controller' not in st.session_state:
+        st.session_state['_b2_cookie_controller'] = CookieController(key='b2_cookie_controller')
+    return st.session_state['_b2_cookie_controller']
+
+
+def _clear_expired(entries):
+    now = time.time()
+    for key, item in list(entries.items()):
+        if item['expires'] <= now:
+            del entries[key]
+
+
+def remember_login(username, password, root):
+    token = secrets.token_urlsafe(32)
+    key = hashlib.sha256(token.encode('ascii')).hexdigest()
+    vault = credential_vault()
+    with vault['lock']:
+        _clear_expired(vault['entries'])
+        vault['entries'][key] = dict(username=username, password=password,
+                                     root=root, expires=time.time() + REMEMBER_SECONDS)
+    cookie_controller().set(REMEMBER_COOKIE, token, max_age=REMEMBER_SECONDS,
+                            expires=datetime.now() + timedelta(seconds=REMEMBER_SECONDS),
+                            secure=True, same_site='strict', path='/')
+    st.session_state['_b2_remember_token'] = token
+
+
+def restore_login():
+    # Cookie component can return None on its first render; no login is inferred.
+    try:
+        token = cookie_controller().get(REMEMBER_COOKIE)
+    except Exception:
+        return False
+    if not isinstance(token, str) or len(token) < 32:
+        return False
+    key = hashlib.sha256(token.encode('ascii')).hexdigest()
+    vault = credential_vault()
+    with vault['lock']:
+        _clear_expired(vault['entries'])
+        entry = vault['entries'].get(key)
+        if entry is None:
+            return False
+        credentials = entry.copy()
+    st.session_state.username = credentials['username']
+    st.session_state.password = credentials['password']
+    st.session_state.root = credentials['root']
+    st.session_state.current = credentials['root']
+    st.session_state.folder_history = []
+    st.session_state.view = 'File Explorer'
+    st.session_state['_b2_remember_token'] = token
+    return True
+
+
+def logout_user():
+    token = st.session_state.get('_b2_remember_token')
+    if not token:
+        try:
+            token = cookie_controller().get(REMEMBER_COOKIE)
+        except Exception:
+            pass
+    if isinstance(token, str):
+        key = hashlib.sha256(token.encode('ascii')).hexdigest()
+        vault = credential_vault()
+        with vault['lock']:
+            vault['entries'].pop(key, None)
+    try:
+        cookie_controller().remove(REMEMBER_COOKIE)
+    except Exception:
+        pass
+    st.session_state.clear()
+    st.rerun()
+
 
 
 def load_verified_host_keys(client):
@@ -265,9 +356,7 @@ def _actions_menu(key_prefix):
             if st.button(label, key=f'{key_prefix}_{page}', use_container_width=True):
                 _open_view(page)
         if st.button('🚪 Log out', key=f'{key_prefix}_logout', use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+            logout_user()
 
 
 def _file_tile(entry, current, index):
@@ -399,9 +488,7 @@ def file_manager():
                 if st.button(label, key='action_' + page, use_container_width=True):
                     _open_view(page)
             if st.button('🚪 Log out', use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
+                logout_user()
     with buttons[5]:
         st.selectbox('Icon size', ['Small', 'Medium', 'Large', 'Extra large'], index=2, key='explorer_icon_size', label_visibility='collapsed', help='Change the size of file and folder icons')
     with buttons[6]:
@@ -689,13 +776,14 @@ def logs_page():
 
 def login_screen():
     st.title('🧪 Bridges-2 Student Workspace')
-    st.write('Sign in with your own PSC account. Credentials are held only in this Streamlit session; deploy only over HTTPS on an access-controlled server.')
+    st.write('Sign in using your PSC account. Optional refresh persistence uses a short-lived browser token, not a browser-stored PSC password.')
     if 'PROJECT_ID' in ROOT_TEMPLATE:
         st.warning('Administrator: configure B2_WORKSPACE_ROOT before enabling student access.')
         st.stop()
     with st.form('login'):
         username = st.text_input('PSC username')
         password = st.text_input('PSC password', type='password')
+        keep_signed_in = st.checkbox('Keep me signed in after refreshing (up to 4 hours)', value=False)
         submitted = st.form_submit_button('Connect to Bridges-2')
     if submitted:
         if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username):
@@ -721,6 +809,8 @@ def login_screen():
             st.session_state.current = root
             st.session_state.folder_history = []
             st.session_state.view = 'File Explorer'
+            if keep_signed_in:
+                remember_login(username, password, root)
             st.rerun()
         except Exception as exc:
             show_error(exc)
@@ -728,8 +818,9 @@ def login_screen():
 
 
 if 'username' not in st.session_state:
-    login_screen()
-    st.stop()
+    if not restore_login():
+        login_screen()
+        st.stop()
 
 # The same Back and Actions navigation is available on all tool screens.
 view = st.session_state.get('view', 'File Explorer')

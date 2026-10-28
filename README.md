@@ -95,3 +95,12 @@ Choose **Actions → Molecule builder**. Draw a small organic molecule in the Ke
 **Deployment:** Add `molecule_builder.py` to the same GitHub directory as `app.py` and `molecule_viewer.py`. Commit the included `requirements.txt` with `streamlit-ketcher` and `rdkit`; Streamlit Community Cloud will install these when redeployed. Your PSC Secrets remain unchanged. The 2D component is served by the Streamlit app; the 3D viewer uses 3Dmol.js via a browser CDN. No changes to PSC directories or user privileges are required.
 
 **Security:** The editor and quick optimization run on the Streamlit hosting instance, not a Bridges-2 compute node. The builder caps molecular size. Server-side PSC credential handling remains an MVP and should be approved by PSC and campus IT before classroom deployment.
+
+## Optional persistent login after browser refresh
+
+Check **Keep me signed in after refreshing (up to 4 hours)** on the PSC sign-in screen.
+The browser receives only a cryptographically random cookie (Secure, SameSite=Strict), not the PSC password. A matching credential record is held in the Streamlit server process memory for at most four hours and removed at expiry/logout. A browser refresh should restore the session while that server process remains active. Reload may briefly show the login form while the cookie component initializes. Streamlit Community Cloud server restarts, idle shutdown, replications or cache clearing invalidate the server-held record and require logging in again.
+
+**Security notice:** This optional feature increases exposure of PSC passwords by storing them in a shared server-side memory cache for a limited time, and a stolen cookie grants access until revoked/expired. Do not use this for an unapproved student-wide service. Obtain PSC/institutional approval and preferably replace PSC password capture with an approved delegated/OIDC authentication + short-lived server-side SSH credentials design. The feature is opt-in and disabled by default.
+
+Dependencies include `streamlit-cookies-controller`. Redeploy the updated `requirements.txt` alongside `app.py`.
