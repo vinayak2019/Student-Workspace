@@ -1,2 +1,4 @@
 streamlit>=1.40,<2
 paramiko>=3.4,<5
+rdkit>=2025.3
+streamlit-ketcher>=0.0.1

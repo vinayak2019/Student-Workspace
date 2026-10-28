@@ -10,6 +10,7 @@ import paramiko
 import streamlit as st
 
 from molecule_viewer import MOLECULE_EXTENSIONS, render_molecule_viewer
+from molecule_builder import molecule_builder_page
 
 st.set_page_config(page_title='Bridges-2 Student Workspace', page_icon='🧪', layout='wide')
 
@@ -256,6 +257,7 @@ def _actions_menu(key_prefix):
     """Shared menu, available from every screen."""
     with st.popover('⚡ Actions', use_container_width=True):
         for label, page in [('📁 Files', 'File Explorer'),
+                            ('🧪 Molecule builder', 'Molecule Builder'),
                             ('🚀 Submit simulation', 'Submit Simulation'),
                             ('📊 Job monitor', 'Job Monitor'),
                             ('📄 Job logs', 'Job Logs'),
@@ -389,7 +391,8 @@ def file_manager():
             
             st.divider()
             st.markdown('**Workspace**')
-            for label, page in [('🚀 Submit simulation', 'Submit Simulation'),
+            for label, page in [('🧪 Molecule builder', 'Molecule Builder'),
+                                ('🚀 Submit simulation', 'Submit Simulation'),
                                 ('📊 Job monitor', 'Job Monitor'),
                                 ('📄 Job logs', 'Job Logs'),
                                 ('⚙️ Account', 'Account')]:
@@ -740,6 +743,8 @@ if view != 'File Explorer':
 
 if view == 'File Explorer':
     file_manager()
+elif view == 'Molecule Builder':
+    molecule_builder_page(sftp_connection, checked_new_path, checked_remote_path, safe_child, show_error)
 elif view == 'Submit Simulation':
     submit_job()
 elif view == 'Job Monitor':
