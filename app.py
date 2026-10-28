@@ -198,9 +198,52 @@ def _human_size(size):
 
 
 def _navigate(path):
+    """Open a folder; remember the previous location for Back."""
+    path = ensure_within_root(path)
+    previous = st.session_state.current
+    if path != previous:
+        history = st.session_state.setdefault('folder_history', [])
+        history.append(previous)
     st.session_state.current = path
     st.session_state.selected_item = None
     st.rerun()
+
+
+def _back():
+    """Return from a tool screen to Files, or navigate folder history."""
+    if st.session_state.get('view', 'File Explorer') != 'File Explorer':
+        st.session_state.view = 'File Explorer'
+    else:
+        history = st.session_state.setdefault('folder_history', [])
+        if history:
+            st.session_state.current = history.pop()
+        elif st.session_state.current != st.session_state.root:
+            st.session_state.current = ensure_within_root(posixpath.dirname(st.session_state.current))
+        else:
+            return
+        st.session_state.selected_item = None
+    st.rerun()
+
+
+def _open_view(page):
+    st.session_state.view = page
+    st.rerun()
+
+
+def _actions_menu(key_prefix):
+    """Shared menu, available from every screen."""
+    with st.popover('⚡ Actions', use_container_width=True):
+        for label, page in [('📁 Files', 'File Explorer'),
+                            ('🚀 Submit simulation', 'Submit Simulation'),
+                            ('📊 Job monitor', 'Job Monitor'),
+                            ('📄 Job logs', 'Job Logs'),
+                            ('⚙️ Account', 'Account')]:
+            if st.button(label, key=f'{key_prefix}_{page}', use_container_width=True):
+                _open_view(page)
+        if st.button('🚪 Log out', key=f'{key_prefix}_logout', use_container_width=True):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
 
 
 def _file_tile(entry, current, index):
@@ -248,8 +291,8 @@ def file_manager():
 
     buttons = st.columns([.8, .8, .8, 1.25, 1.4, 4.8], vertical_alignment='center')
     with buttons[0]:
-        if st.button('← Back', disabled=current == root, use_container_width=True):
-            _navigate(ensure_within_root(posixpath.dirname(current)))
+        if st.button('← Back', disabled=(current == root and not st.session_state.get('folder_history')), use_container_width=True):
+            _back()
     with buttons[1]:
         if st.button('⌂ Home', use_container_width=True):
             _navigate(root)
@@ -309,8 +352,7 @@ def file_manager():
                                 ('📄 Job logs', 'Job Logs'),
                                 ('⚙️ Account', 'Account')]:
                 if st.button(label, key='action_' + page, use_container_width=True):
-                    st.session_state.view = page
-                    st.rerun()
+                    _open_view(page)
             if st.button('🚪 Log out', use_container_width=True):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
@@ -589,6 +631,8 @@ def login_screen():
             st.session_state.password = password
             st.session_state.root = root
             st.session_state.current = root
+            st.session_state.folder_history = []
+            st.session_state.view = 'File Explorer'
             st.rerun()
         except Exception as exc:
             show_error(exc)
@@ -599,26 +643,15 @@ if 'username' not in st.session_state:
     login_screen()
     st.stop()
 
-# Page navigation lives in the Windows-style Actions menu instead of a sidebar.
+# The same Back and Actions navigation is available on all tool screens.
 view = st.session_state.get('view', 'File Explorer')
 if view != 'File Explorer':
-    nav = st.columns([2, 2, 6], vertical_alignment='center')
+    nav = st.columns([1.4, 1.6, 7], vertical_alignment='center')
     with nav[0]:
-        if st.button('← Files', use_container_width=True):
-            st.session_state.view = 'File Explorer'
-            st.rerun()
+        if st.button('← Back', key='tool_back', use_container_width=True):
+            _back()
     with nav[1]:
-        with st.popover('⚡ Actions', use_container_width=True):
-            for label, page in [('📁 Files', 'File Explorer'), ('🚀 Submit simulation', 'Submit Simulation'),
-                                ('📊 Job monitor', 'Job Monitor'), ('📄 Job logs', 'Job Logs'),
-                                ('⚙️ Account', 'Account')]:
-                if st.button(label, key='nav_' + page, use_container_width=True):
-                    st.session_state.view = page
-                    st.rerun()
-            if st.button('🚪 Log out', key='nav_logout'):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
+        _actions_menu('tool_action')
 
 if view == 'File Explorer':
     file_manager()
