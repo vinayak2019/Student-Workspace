@@ -76,3 +76,8 @@ are intentionally not included.
 Streamlit secrets (especially the *verified* `PSC_KNOWN_HOSTS` entries), then
 reboot the application in share.streamlit.io. Python package requirements are
 unchanged. The application has not been integration-tested against a live PSC account.
+
+
+### File icon display
+
+Use the **Icon size** dropdown in the Files toolbar to select Small, Medium, Large, or Extra large. Large is the default. File sizes are not displayed in the explorer grid, list, or selected-file details.

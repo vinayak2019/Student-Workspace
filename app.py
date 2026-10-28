@@ -90,7 +90,9 @@ h2,h3 {font-size:1.12rem!important;}
  font-weight:450!important;padding:.65rem .3rem!important;}
 [class*="st-key-tile_"] button:hover {background:#e8f2fc!important;border-color:#c8e3fb!important;}
 [class*="st-key-tile_"] button[kind="primary"] {background:#dceefe!important;border-color:#a9d5fa!important;}
-[class*="st-key-tile_"] button p {overflow-wrap:anywhere;}
+[class*="st-key-tile_"] button p {overflow-wrap:anywhere; white-space:pre-line!important; line-height:1.3!important; font-size:.83rem!important;}
+/* Icon size follows the Explorer's icon-size selector. */
+[class*="st-key-tile_"] button p::first-line {font-size:var(--explorer-icon-size, 4.5rem)!important; line-height:1.45!important;}
 [data-testid="stVerticalBlockBorderWrapper"] {border-radius:6px;}
 [data-testid="stPopover"] button {border-radius:5px;}
 [data-testid="stCaptionContainer"] {font-size:.76rem;}
@@ -255,7 +257,7 @@ def _file_tile(entry, current, index):
     if name.endswith(('.sbatch', '.slurm', '.job')) and not directory:
         icon = '🚀'
     # Native Streamlit buttons keep event handling on the server (no injected JS).
-    if st.button(f'{icon}  {name}', key=f'tile_{current}_{index}',
+    if st.button(f'{icon}  \n{name}', key=f'tile_{current}_{index}',
                  use_container_width=True, type='primary' if selected else 'secondary',
                  help='Open folder' if directory else 'Select file to see actions'):
         try:
@@ -272,9 +274,7 @@ def _file_tile(entry, current, index):
                 st.rerun()
         except Exception as exc:
             show_error(exc)
-    
-    if not directory:
-        st.caption('Shortcut' if symlink else _human_size(entry.st_size))
+
 
 
 def file_manager():
@@ -289,7 +289,7 @@ def file_manager():
     with header_right:
         st.caption('Bridges-2  •  ' + st.session_state.username)
 
-    buttons = st.columns([.8, .8, .8, 1.25, 1.4, 4.8], vertical_alignment='center')
+    buttons = st.columns([.8, .8, .7, 1.3, 1.45, 1.55, 3.6], vertical_alignment='center')
     with buttons[0]:
         if st.button('← Back', disabled=(current == root and not st.session_state.get('folder_history')), use_container_width=True):
             _back()
@@ -358,6 +358,8 @@ def file_manager():
                     del st.session_state[key]
                 st.rerun()
     with buttons[5]:
+        st.selectbox('Icon size', ['Small', 'Medium', 'Large', 'Extra large'], index=2, key='explorer_icon_size', label_visibility='collapsed', help='Change the size of file and folder icons')
+    with buttons[6]:
         st.text_input('Search', key='explorer_search', placeholder='🔎 Search files', label_visibility='collapsed')
 
     # Breadcrumbs are the familiar Explorer address bar.
@@ -388,26 +390,36 @@ def file_manager():
     nfolders = sum(stat.S_ISDIR(a.st_mode) for a in attrs)
     st.caption(f'{len(attrs)} items  •  {nfolders} folders')
 
+    size_settings = {
+        'Small': (9, 40, '2.5rem'),
+        'Medium': (7, 56, '3.5rem'),
+        'Large': (5, 76, '4.75rem'),
+        'Extra large': (4, 100, '6.25rem'),
+    }
+    cols_per_row, tile_height, icon_font = size_settings[st.session_state.get('explorer_icon_size', 'Large')]
+    st.markdown(f'''<style>
+        :root {{ --explorer-icon-size: {icon_font}; }}
+        [class*="st-key-tile_"] button {{min-height:{tile_height + 30}px!important;}}
+        [class*="st-key-tile_"] button p::first-line {{font-size:{icon_font}!important;}}
+    </style>''', unsafe_allow_html=True)
+
     if not attrs:
         st.info('No items to display.')
     elif st.session_state.get('explorer_list', False):
-        header = st.columns([6, 2, 1.4])
+        header = st.columns([7, 3])
         header[0].caption('Name')
         header[1].caption('Date modified')
-        header[2].caption('Size')
         st.divider()
         for idx, entry in enumerate(attrs):
-            one, two, three = st.columns([6, 2, 1.4], vertical_alignment='center')
+            one, two = st.columns([7, 3], vertical_alignment='center')
             with one:
                 _file_tile(entry, current, idx)
             with two:
                 st.caption(datetime.fromtimestamp(entry.st_mtime).strftime('%b %d, %Y'))
-            with three:
-                st.caption('' if stat.S_ISDIR(entry.st_mode) else _human_size(entry.st_size))
     else:
-        for start in range(0, len(attrs), 6):
-            columns = st.columns(6)
-            for column, index in zip(columns, range(start, min(start+6, len(attrs)))):
+        for start in range(0, len(attrs), cols_per_row):
+            columns = st.columns(cols_per_row)
+            for column, index in zip(columns, range(start, min(start+cols_per_row, len(attrs)))):
                 with column:
                     _file_tile(attrs[index], current, index)
 
@@ -423,8 +435,7 @@ def file_actions(item, current):
     selected = item.filename
     path = safe_child(current, selected)
     st.markdown(f'**Selected:** `{selected}`')
-    st.caption(f'Size: {_human_size(item.st_size)} · Modified: '
-               + datetime.fromtimestamp(item.st_mtime).strftime('%Y-%m-%d %H:%M'))
+    st.caption('Modified: ' + datetime.fromtimestamp(item.st_mtime).strftime('%Y-%m-%d %H:%M'))
     # Links are not offered for download or editing to avoid symlink escapes.
     if stat.S_ISLNK(item.st_mode):
         st.warning('Symbolic link selected. Link editing is not available.')
