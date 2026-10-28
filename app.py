@@ -76,8 +76,7 @@ def remember_login(username, password, root):
                             expires=datetime.now() + timedelta(seconds=REMEMBER_SECONDS),
                             secure=True, same_site='strict', path='/')
     st.session_state['_b2_remember_token'] = token
-    # Allow the cookie component to finish its browser-side write before rerun.
-    time.sleep(0.7)
+    # Do not rerun immediately: component commands must reach the browser first.
 
 
 def _browser_remember_token():
@@ -824,9 +823,15 @@ def login_screen():
             st.session_state.view = 'File Explorer'
             if keep_signed_in:
                 remember_login(username, password, root)
-            st.rerun()
+            if keep_signed_in:
+                st.success('Connected. Select **Open workspace** below to finish saving this browser sign-in.')
+            else:
+                st.success('Connected. Select **Open workspace** to continue.')
         except Exception as exc:
             show_error(exc)
+    if 'username' in st.session_state:
+        if st.button('Open workspace', type='primary', key='finish_login'):
+            st.rerun()
     st.caption('PSC may require additional authentication or a supported access method. If password authentication is unavailable, use PSC Open OnDemand while an approved SSH authentication integration is configured.')
 
 
