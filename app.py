@@ -83,16 +83,26 @@ st.markdown("""<style>
 h1 {font-size:1.65rem!important;font-weight:650!important;letter-spacing:-.025em;}
 h2,h3 {font-size:1.12rem!important;}
 .stButton button {border-radius:5px;min-height:2.3rem;}
-/* File/folder items: unboxed icon labels, subtle hover like Explorer. */
+/* Explorer tiles: the icon is a real scalable pseudo-element, not button text. */
 [class*="st-key-tile_"] button {background:transparent!important;border:1px solid transparent!important;
- box-shadow:none!important;color:#1f2937!important;min-height:64px!important;
- justify-content:center!important;white-space:normal!important;text-align:center!important;
- font-weight:450!important;padding:.65rem .3rem!important;}
+ box-shadow:none!important;color:#1f2937!important;min-height:125px!important;
+ display:flex!important;flex-direction:column!important;align-items:center!important;
+ justify-content:center!important;gap:.22rem!important;
+ white-space:normal!important;text-align:center!important;font-weight:450!important;
+ padding:.5rem .25rem!important;}
+[class*="st-key-tile_"] button::before {
+ content:"📄";display:block;font-family:"Segoe UI Emoji","Apple Color Emoji",sans-serif;
+ font-size:var(--explorer-icon-size, 5rem)!important;
+ line-height:1.08!important;flex-shrink:0!important;
+}
+[class*="st-key-folder_"] button::before {content:"📁";}
+[class*="st-key-link_"] button::before {content:"🔗";}
+[class*="st-key-log_"] button::before {content:"📜";}
+[class*="st-key-job_"] button::before {content:"🚀";}
 [class*="st-key-tile_"] button:hover {background:#e8f2fc!important;border-color:#c8e3fb!important;}
 [class*="st-key-tile_"] button[kind="primary"] {background:#dceefe!important;border-color:#a9d5fa!important;}
-[class*="st-key-tile_"] button p {overflow-wrap:anywhere; white-space:pre-line!important; line-height:1.3!important; font-size:.83rem!important;}
-/* Icon size follows the Explorer's icon-size selector. */
-[class*="st-key-tile_"] button p::first-line {font-size:var(--explorer-icon-size, 4.5rem)!important; line-height:1.45!important;}
+[class*="st-key-tile_"] button p {overflow-wrap:anywhere;white-space:normal!important;
+ line-height:1.25!important;font-size:.83rem!important;margin:0!important;}
 [data-testid="stVerticalBlockBorderWrapper"] {border-radius:6px;}
 [data-testid="stPopover"] button {border-radius:5px;}
 [data-testid="stCaptionContainer"] {font-size:.76rem;}
@@ -253,28 +263,28 @@ def _file_tile(entry, current, index):
     directory = stat.S_ISDIR(entry.st_mode)
     symlink = stat.S_ISLNK(entry.st_mode)
     selected = st.session_state.get('selected_item') == name
-    icon = '📁' if directory else ('🔗' if symlink else ('📜' if name.endswith(('.out', '.err', '.log')) else '📄'))
-    if name.endswith(('.sbatch', '.slurm', '.job')) and not directory:
-        icon = '🚀'
-    # Native Streamlit buttons keep event handling on the server (no injected JS).
-    if st.button(f'{icon}  \n{name}', key=f'tile_{current}_{index}',
-                 use_container_width=True, type='primary' if selected else 'secondary',
-                 help='Open folder' if directory else 'Select file to see actions'):
-        try:
-            target = safe_child(current, name)
-            if directory:
-                ssh, sftp = sftp_connection()
-                try:
-                    checked_remote_path(sftp, target)
-                finally:
-                    sftp.close(); ssh.close()
-                _navigate(target)
-            else:
-                st.session_state.selected_item = name
-                st.rerun()
-        except Exception as exc:
-            show_error(exc)
-
+    kind = ('folder' if directory else 'link' if symlink else
+            'job' if name.endswith(('.sbatch', '.slurm', '.job')) else
+            'log' if name.endswith(('.out', '.err', '.log')) else 'file')
+    # CSS draws the icon separately from the label, so icon size scales correctly.
+    with st.container(key=f'tile_{kind}_{index}'):
+        if st.button(name, key=f'file_button_{current}_{index}',
+                     use_container_width=True, type='primary' if selected else 'secondary',
+                     help='Open folder' if directory else 'Select file to see actions'):
+            try:
+                target = safe_child(current, name)
+                if directory:
+                    ssh, sftp = sftp_connection()
+                    try:
+                        checked_remote_path(sftp, target)
+                    finally:
+                        sftp.close(); ssh.close()
+                    _navigate(target)
+                else:
+                    st.session_state.selected_item = name
+                    st.rerun()
+            except Exception as exc:
+                show_error(exc)
 
 
 def file_manager():
@@ -391,16 +401,15 @@ def file_manager():
     st.caption(f'{len(attrs)} items  •  {nfolders} folders')
 
     size_settings = {
-        'Small': (9, 40, '2.5rem'),
-        'Medium': (7, 56, '3.5rem'),
-        'Large': (5, 76, '4.75rem'),
-        'Extra large': (4, 100, '6.25rem'),
+        'Small': (9, 44, '2.5rem'),
+        'Medium': (7, 60, '3.75rem'),
+        'Large': (5, 88, '5.25rem'),
+        'Extra large': (4, 120, '7rem'),
     }
     cols_per_row, tile_height, icon_font = size_settings[st.session_state.get('explorer_icon_size', 'Large')]
     st.markdown(f'''<style>
         :root {{ --explorer-icon-size: {icon_font}; }}
-        [class*="st-key-tile_"] button {{min-height:{tile_height + 30}px!important;}}
-        [class*="st-key-tile_"] button p::first-line {{font-size:{icon_font}!important;}}
+        [class*="st-key-tile_"] button {{min-height:{tile_height + 45}px!important;}}
     </style>''', unsafe_allow_html=True)
 
     if not attrs:
