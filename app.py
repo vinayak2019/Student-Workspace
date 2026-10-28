@@ -378,7 +378,7 @@ def file_manager():
                                 path = safe_child(current, upload.name)
                                 checked_new_path(sftp, path)
                                 # Avoid overwriting preexisting files silently.
-                                with sftp.open(path, 'xb') as remote:
+                                with sftp.open(path, 'wx') as remote:
                                     upload.seek(0)
                                     while chunk := upload.read(1024 * 1024):
                                         remote.write(chunk)

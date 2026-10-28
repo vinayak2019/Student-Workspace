@@ -129,7 +129,7 @@ def molecule_builder_page(sftp_connection, checked_new_path, checked_remote_path
                         raise
                 else:
                     raise FileExistsError('A file with this name already exists. Choose a different name.')
-                with sftp.open(target, 'xb') as output:
+                with sftp.open(target, 'wx') as output:
                     output.write(contents.encode('utf-8'))
             finally:
                 sftp.close()
