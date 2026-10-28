@@ -81,3 +81,9 @@ unchanged. The application has not been integration-tested against a live PSC ac
 ### File icon display
 
 Use the **Icon size** dropdown in the Files toolbar to select Small, Medium, Large, or Extra large. Large is the default. File sizes are not displayed in the explorer grid, list, or selected-file details.
+
+## 3D molecular viewer
+
+The Files screen now offers **Open 3D molecule viewer** for `.pdb`, `.sdf`, `.cif`, `.mol2`, and `.xyz`. The viewer supports ball-and-stick, sticks, space-filling, lines, and protein cartoon display; white/dark/light-blue backgrounds; automatic rotation; and optional CIF unit-cell display when the structure provides the relevant information. Rotate by dragging, zoom with the scroll wheel, and pan with right-drag.
+
+**Deploy both `app.py` and `molecule_viewer.py` together** in the same GitHub folder. No new pip dependencies are needed: the viewer loads 3Dmol.js from jsDelivr in the student's browser. The browser therefore needs external HTTPS access to that CDN. Preview is limited to 8 MB per molecular file to protect web-app memory; large trajectories should be downloaded and viewed locally. This is visualization, not a chemically validated structure conversion, and guessed bonds (especially XYZ) and CIF unit-cell/symmetry representations should be checked before chemical interpretation. Files are fetched through the existing authenticated SFTP session; the viewer does not send them to a structure database.

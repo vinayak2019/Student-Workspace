@@ -9,6 +9,8 @@ from datetime import datetime
 import paramiko
 import streamlit as st
 
+from molecule_viewer import MOLECULE_EXTENSIONS, render_molecule_viewer
+
 st.set_page_config(page_title='Bridges-2 Student Workspace', page_icon='🧪', layout='wide')
 
 def config(name, default=None):
@@ -282,7 +284,7 @@ def _file_tile(entry, current, index):
         kind = 'log'
     elif extension in ('.py', '.ipynb'):
         kind = 'python'
-    elif extension in ('.in', '.inp', '.xyz', '.cif', '.pdb', '.mol', '.mol2'):
+    elif extension in ('.in', '.inp', '.xyz', '.cif', '.pdb', '.sdf', '.mol', '.mol2'):
         kind = 'input'
     elif extension in ('.csv', '.tsv', '.json', '.xml', '.dat', '.h5', '.hdf5', '.xlsx'):
         kind = 'data'
@@ -470,6 +472,30 @@ def file_manager():
         file_actions(item, current)
 
 
+def molecule_preview(path, filename):
+    """Fetch a bounded molecule file through the existing authenticated SFTP channel."""
+    ssh, sftp = sftp_connection()
+    try:
+        checked_remote_path(sftp, path)
+        attributes = sftp.stat(path)
+        max_bytes = 8 * 1024 * 1024
+        if attributes.st_size > max_bytes:
+            st.warning('This structure exceeds the 8 MB browser viewer limit. Download it to view locally.')
+            return
+        with sftp.open(path, 'rb') as remote:
+            raw = remote.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            st.warning('Structure exceeds the 8 MB browser viewer limit.')
+            return
+        if b'\x00' in raw:
+            st.error('The structure does not look like a plain-text molecular file.')
+            return
+        render_molecule_viewer(raw.decode('utf-8', errors='replace'), filename)
+    finally:
+        sftp.close()
+        ssh.close()
+
+
 def file_actions(item, current):
     selected = item.filename
     path = safe_child(current, selected)
@@ -479,7 +505,16 @@ def file_actions(item, current):
     if stat.S_ISLNK(item.st_mode):
         st.warning('Symbolic link selected. Link editing is not available.')
         return
-    if st.button('👁 Preview', use_container_width=True):
+    is_molecule = posixpath.splitext(selected)[1].lower() in MOLECULE_EXTENSIONS
+    if is_molecule:
+        if st.button('🧬 Open 3D molecule viewer', use_container_width=True, type='primary'):
+            st.session_state.molecule_path = path
+        if st.session_state.get('molecule_path') == path:
+            try:
+                molecule_preview(path, selected)
+            except Exception as exc:
+                show_error(exc)
+    if st.button('👁 Preview as text', use_container_width=True):
         st.session_state.preview_path = path
     if st.session_state.get('preview_path') == path:
         try:
