@@ -387,7 +387,7 @@ def _file_tile(entry, current, index):
         kind = 'log'
     elif extension in ('.py', '.ipynb'):
         kind = 'python'
-    elif extension in ('.in', '.inp', '.xyz', '.cif', '.pdb', '.sdf', '.mol', '.mol2'):
+    elif extension in ('.in', '.inp', '.xyz', '.cif', '.pdb', '.sdf', '.mol', '.mol2', '.cube', '.cub'):
         kind = 'input'
     elif extension in ('.csv', '.tsv', '.json', '.xml', '.dat', '.h5', '.hdf5', '.xlsx'):
         kind = 'data'
@@ -580,14 +580,14 @@ def molecule_preview(path, filename):
     try:
         checked_remote_path(sftp, path)
         attributes = sftp.stat(path)
-        max_bytes = 8 * 1024 * 1024
+        max_bytes = (16 if filename.lower().endswith(('.cube', '.cub')) else 8) * 1024 * 1024
         if attributes.st_size > max_bytes:
-            st.warning('This structure exceeds the 8 MB browser viewer limit. Download it to view locally.')
+            st.warning('Structure exceeds the browser preview limit (8 MB for structures, 16 MB for cube files).')
             return
         with sftp.open(path, 'rb') as remote:
             raw = remote.read(max_bytes + 1)
         if len(raw) > max_bytes:
-            st.warning('Structure exceeds the 8 MB browser viewer limit.')
+            st.warning('Structure exceeds the browser preview limit.')
             return
         if b'\x00' in raw:
             st.error('The structure does not look like a plain-text molecular file.')

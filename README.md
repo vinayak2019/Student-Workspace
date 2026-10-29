@@ -104,3 +104,24 @@ The browser receives only a cryptographically random cookie (Secure, SameSite=St
 **Security notice:** This optional feature increases exposure of PSC passwords by storing them in a shared server-side memory cache for a limited time, and a stolen cookie grants access until revoked/expired. Do not use this for an unapproved student-wide service. Obtain PSC/institutional approval and preferably replace PSC password capture with an approved delegated/OIDC authentication + short-lived server-side SSH credentials design. The feature is opt-in and disabled by default.
 
 Dependencies include `streamlit-cookies-controller`. Redeploy the updated `requirements.txt` alongside `app.py`.
+
+
+### Browser refresh sign-in: two-stage fix (October 2026)
+
+The initial code called `st.rerun()` immediately after `CookieController.set()`, which could interrupt delivery of the browser-side cookie operation. The updated login requires clicking **Open workspace** after successful authentication; this gives the component an opportunity to run in the browser before rerunning.
+
+**This is not a guaranteed persistent-authentication solution on Streamlit Community Cloud.** Browser privacy settings, component iframe limitations, Streamlit's cookie-forwarding behavior, or a server restart can still prevent restoration. If the user is prompted to sign in after refresh, inspect the browser's Application/Storage > Cookies for `b2_workspace_session` and check whether it is present after pressing Open workspace. Do not share its value or any PSC credentials. If the cookie exists but restoration fails, the in-process session record may be unavailable or the cookie may be omitted from Streamlit's request. For reliable institutional use, switch to PSC-approved delegated authentication and a persistent server-side session architecture on an approved host.
+
+
+## Measurements and Gaussian cube visualization (October 2026)
+
+Select a PDB, SDF, CIF, MOL2, XYZ, CUBE or CUB file in Files, then click **Open 3D molecule viewer**.
+
+- Measurement toolbar: choose **Distance** (2 atoms), **Angle** (3 atoms), or **Dihedral** (4 atoms) and click atoms in order. Click **Clear measurements** to remove markers and measurement history. Results use Cartesian coordinates in Å and degrees.
+- Toggle **Atom numbers** and **Element labels** to display atom labels; large structures are limited to 1,500 labels to keep the browser responsive.
+- Open `.cube` or `.cub` files directly to show the atoms recorded in the Gaussian cube file and render electron-density (positive field) or molecular-orbital isosurfaces (positive and negative signed phases). Choose isovalue and opacity.
+- Structure previews are limited to 8 MiB and cube files to 16 MiB; heavy cubes can overwhelm a student's browser even within the limit. Files are read from PSC over SFTP and rendered in the student's browser with 3Dmol.js.
+
+**Scientific cautions:** The meaning and units of the cube's scalar field depend on the program that generated it. Positive/negative orbital phases are not electric charge; an electron-density cube should use the positive-only display. Atom numbers refer to the viewer's parsed atom order, which might differ from original crystallographic labels. Geometry on periodic structures is measured in the displayed coordinates, not automatically using minimum-image periodic boundaries. Cube formats with multiple orbital datasets or nonstandard variants may require conversion to a conventional single-field Gaussian cube.
+
+No additional Python dependencies or PSC Secrets changes are needed. No live PSC or browser GPU test was performed.
