@@ -125,3 +125,9 @@ Select a PDB, SDF, CIF, MOL2, XYZ, CUBE or CUB file in Files, then click **Open 
 **Scientific cautions:** The meaning and units of the cube's scalar field depend on the program that generated it. Positive/negative orbital phases are not electric charge; an electron-density cube should use the positive-only display. Atom numbers refer to the viewer's parsed atom order, which might differ from original crystallographic labels. Geometry on periodic structures is measured in the displayed coordinates, not automatically using minimum-image periodic boundaries. Cube formats with multiple orbital datasets or nonstandard variants may require conversion to a conventional single-field Gaussian cube.
 
 No additional Python dependencies or PSC Secrets changes are needed. No live PSC or browser GPU test was performed.
+
+## Windows-style path/address navigation
+
+The file explorer shows the full current PSC path above the files. Click **This PC › Project** or the pencil icon to edit the address, enter an absolute PSC path (e.g. `/ocean/projects/...` or `/jet/home/yourusername`), and click **Go**. The path must exist, be a folder, and be accessible to the current PSC user over SFTP. Back and Home continue to work; Home returns to the configured project folder.
+
+By default `B2_ALLOW_OTHER_PATHS = "true"` enables this requested feature. To lock students within their configured project workspace (including symlink checks), add `B2_ALLOW_OTHER_PATHS = "false"` to Streamlit Secrets. The app never elevates PSC account permissions. If allowing access outside the project, make sure this is appropriate for your course and institution's security requirements.

@@ -38,6 +38,8 @@ KNOWN_HOSTS = config('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
 MAX_UPLOAD_MB = int(config('B2_MAX_UPLOAD_MB', '100'))
 ALLOWED_PARTITIONS = [x.strip() for x in config('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
 MAX_DOWNLOAD_MB = int(config('B2_MAX_DOWNLOAD_MB', '100'))
+# Users may browse other paths their own PSC account permits. Set false to lock to project.
+ALLOW_OTHER_PATHS = config('B2_ALLOW_OTHER_PATHS', 'true').strip().lower() in ('1', 'yes', 'true', 'on')
 
 # An opt-in, short-lived browser token restores a session after a hard refresh.
 # PSC credentials are NEVER stored in browser cookies; only in server process
@@ -264,10 +266,14 @@ def sftp_connection():
 
 
 def ensure_within_root(path):
-    root = st.session_state.root
+    """Normalize a remote absolute pathname and apply the optional project boundary."""
+    if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
+        raise ValueError('Enter an absolute Bridges-2 path beginning with /.')
     candidate = posixpath.normpath(path)
-    if candidate != root and not candidate.startswith(root.rstrip('/') + '/'):
-        raise ValueError('Outside the configured workspace.')
+    if not ALLOW_OTHER_PATHS:
+        root = st.session_state.root
+        if candidate != root and not candidate.startswith(root.rstrip('/') + '/'):
+            raise ValueError('Outside the configured project workspace.')
     return candidate
 
 
@@ -278,12 +284,13 @@ def safe_child(parent, name):
 
 
 def checked_remote_path(sftp, path):
-    '''Resolve remote symlinks; refuse escapes, including symlinked parents.'''
+    """Resolve paths on PSC; enforce project boundary when restricted."""
     path = ensure_within_root(path)
     resolved = sftp.normalize(path)
-    root_real = sftp.normalize(st.session_state.root)
-    if resolved != root_real and not resolved.startswith(root_real.rstrip('/') + '/'):
-        raise ValueError('A link points outside the configured workspace.')
+    if not ALLOW_OTHER_PATHS:
+        root_real = sftp.normalize(st.session_state.root)
+        if resolved != root_real and not resolved.startswith(root_real.rstrip('/') + '/'):
+            raise ValueError('A link points outside the configured project workspace.')
     return path
 
 
@@ -324,14 +331,23 @@ def _human_size(size):
 
 
 def _navigate(path):
-    """Open a folder; remember the previous location for Back."""
+    """Validate a folder through PSC SFTP before committing navigation history."""
     path = ensure_within_root(path)
+    ssh, sftp = sftp_connection()
+    try:
+        checked_remote_path(sftp, path)
+        info = sftp.stat(path)
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError('This path is not a folder.')
+    finally:
+        sftp.close()
+        ssh.close()
     previous = st.session_state.current
     if path != previous:
-        history = st.session_state.setdefault('folder_history', [])
-        history.append(previous)
+        st.session_state.setdefault('folder_history', []).append(previous)
     st.session_state.current = path
     st.session_state.selected_item = None
+    st.session_state.address_edit = False
     st.rerun()
 
 
@@ -425,8 +441,9 @@ def _file_tile(entry, current, index):
 def file_manager():
     current = st.session_state.current
     root = st.session_state.root
-    rel = posixpath.relpath(current, root)
-    crumbs = [] if rel == '.' else rel.split('/')
+    inside_root = current == root or current.startswith(root.rstrip('/') + '/')
+    rel = posixpath.relpath(current, root) if inside_root else None
+    crumbs = [] if rel in (None, '.') else rel.split('/')
 
     header_left, header_right = st.columns([5, 2], vertical_alignment='center')
     with header_left:
@@ -506,15 +523,42 @@ def file_manager():
     with buttons[6]:
         st.text_input('Search', key='explorer_search', placeholder='🔎 Search files', label_visibility='collapsed')
 
-    # Breadcrumbs are the familiar Explorer address bar.
-    breadcrumb_cols = st.columns(min(8, len(crumbs) + 1))
-    with breadcrumb_cols[0]:
-        if st.button('This PC  ›  Project', key='crumb_root'):
-            _navigate(root)
-    for i, part in enumerate(crumbs[:7]):
-        with breadcrumb_cols[min(i+1, len(breadcrumb_cols)-1)]:
-            if st.button('› ' + part, key=f'crumb_{i}'):
-                _navigate(ensure_within_root(posixpath.join(root, *crumbs[:i+1])))
+    # Windows Explorer-style breadcrumb / editable address bar.
+    address_cols = st.columns([2.0, 7.4, 0.6], vertical_alignment='center')
+    with address_cols[0]:
+        if st.button('This PC  ›  Project', key='crumb_root',
+                     help='Show or enter the full remote path', use_container_width=True):
+            st.session_state.address_edit = True
+            st.session_state['path_address_input'] = current
+            st.rerun()
+    with address_cols[1]:
+        if st.session_state.get('address_edit', False):
+            with st.form('navigate_path_form', border=False):
+                entered = st.text_input('Bridges-2 path', key='path_address_input',
+                                        label_visibility='collapsed',
+                                        placeholder='/ocean/projects/...')
+                submitted = st.form_submit_button('Go')
+            if submitted:
+                try:
+                    _navigate(entered.strip())
+                except Exception as exc:
+                    show_error(exc)
+        else:
+            st.code(current, language=None)
+    with address_cols[2]:
+        if st.button('✎', key='edit_address', help='Edit full path', use_container_width=True):
+            st.session_state['path_address_input'] = current
+            st.session_state.address_edit = True
+            st.rerun()
+    if inside_root and crumbs and not st.session_state.get('address_edit', False):
+        breadcrumb_cols = st.columns(min(7, len(crumbs)))
+        for i, part in enumerate(crumbs[:7]):
+            with breadcrumb_cols[i]:
+                if st.button('› ' + part, key=f'crumb_{i}'):
+                    try:
+                        _navigate(posixpath.join(root, *crumbs[:i+1]))
+                    except Exception as exc:
+                        show_error(exc)
 
     try:
         ssh, sftp = sftp_connection()
