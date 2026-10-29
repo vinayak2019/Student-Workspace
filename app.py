@@ -397,7 +397,7 @@ def _file_tile(entry, current, index):
         kind = 'folder'
     elif symlink:
         kind = 'link'
-    elif extension in ('.sbatch', '.slurm', '.job'):
+    elif extension in ('.sh', '.sbatch', '.slurm', '.job'):
         kind = 'job'
     elif extension in ('.out', '.err', '.log', '.stderr', '.stdout'):
         kind = 'log'
@@ -727,19 +727,19 @@ def file_actions(item, current):
 
 def submit_job():
     st.subheader('🚀 Submit Simulation')
-    st.caption('Choose a previously prepared .sbatch, .slurm or .job script. Jobs run on compute nodes under your PSC allocation.')
+    st.caption('Choose a previously prepared .sh, .sbatch, .slurm, or .job script. Jobs run on compute nodes under your PSC allocation.')
     try:
         ssh, sftp = sftp_connection()
         try:
             checked_remote_path(sftp, st.session_state.current)
             names = [a.filename for a in sftp.listdir_attr(st.session_state.current)
-                     if stat.S_ISREG(a.st_mode) and a.filename.endswith(('.sbatch', '.slurm', '.job'))]
+                     if stat.S_ISREG(a.st_mode) and a.filename.lower().endswith(('.sh', '.sbatch', '.slurm', '.job'))]
         finally:
             sftp.close(); ssh.close()
     except Exception as exc:
         show_error(exc); return
     if not names:
-        st.info('Upload a .sbatch, .slurm, or .job script to the current folder using File Explorer first.')
+        st.info('Upload a .sh, .sbatch, .slurm, or .job script to the current folder using File Explorer first.')
         return
     with st.form('submit_form'):
         script = st.selectbox('Job script', names)
