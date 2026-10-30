@@ -792,7 +792,34 @@ def jobs_page():
                 st.error('Enter a valid Job ID.')
             else:
                 try:
-                    st.code(ssh_command(['sacct', '-j', job_id, '--format=JobID,JobName,State,Elapsed,ExitCode,StdOut,StdErr', '-P']))
+                    # StdOut / StdErr are NOT valid sacct --format fields on PSC.
+                    # Accounting information is available even after the job leaves squeue.
+                    accounting = ssh_command([
+                        'sacct', '-j', job_id, '--noheader', '--parsable2', '-X',
+                        '--format=JobID,JobName,Partition,State,Elapsed,ExitCode,Start,End,NodeList'
+                    ])
+                    if accounting:
+                        headers = ['Job ID', 'Name', 'Partition', 'State', 'Elapsed',
+                                   'Exit code', 'Started', 'Ended', 'Nodes']
+                        records = [dict(zip(headers, line.split('|', len(headers)-1)))
+                                   for line in accounting.splitlines() if line.strip()]
+                        st.dataframe(records, use_container_width=True, hide_index=True)
+                    else:
+                        st.info('No accounting record found for this job.')
+
+                    # scontrol can report the output/error paths for active and
+                    # recently retained jobs; historical jobs may be purged.
+                    try:
+                        details = ssh_command(['scontrol', 'show', 'job', '-o', job_id])
+                        for field, title in [('WorkDir', 'Working folder'),
+                                             ('StdOut', 'Standard output'),
+                                             ('StdErr', 'Standard error')]:
+                            match = re.search(r'(?:^|\s)' + field + r'=(\S+)', details)
+                            if match:
+                                st.text(f'{title}: {match.group(1)}')
+                    except Exception:
+                        st.caption('SLURM no longer has live job details. For completed jobs, '
+                                   'open the saved .out/.err files through Files or Job Logs.')
                 except Exception as exc:
                     show_error(exc)
 

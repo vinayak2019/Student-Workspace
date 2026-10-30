@@ -131,3 +131,22 @@ No additional Python dependencies or PSC Secrets changes are needed. No live PSC
 The file explorer shows the full current PSC path above the files. Click **This PC › Project** or the pencil icon to edit the address, enter an absolute PSC path (e.g. `/ocean/projects/...` or `/jet/home/yourusername`), and click **Go**. The path must exist, be a folder, and be accessible to the current PSC user over SFTP. Back and Home continue to work; Home returns to the configured project folder.
 
 By default `B2_ALLOW_OTHER_PATHS = "true"` enables this requested feature. To lock students within their configured project workspace (including symlink checks), add `B2_ALLOW_OTHER_PATHS = "false"` to Streamlit Secrets. The app never elevates PSC account permissions. If allowing access outside the project, make sure this is appropriate for your course and institution's security requirements.
+
+## Using `.sh` files for SLURM jobs
+
+The Submit Simulation screen now detects `.sh` files in the currently opened folder, alongside `.sbatch`, `.slurm`, and `.job`. These are submitted using `sbatch -- script.sh`, not executed directly on the login host. `.sh` files must contain a valid batch script with appropriate `#SBATCH` directives, including a shebang, an allocation (if necessary), requested time and resources, and the intended simulation command. The GUI partition selection overrides the partition specified in the script. The `.sh` icon is shown as a job script in File Explorer.
+
+Example:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=test_simulation
+#SBATCH --time=00:10:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+
+module purge
+echo "Running on $(hostname)"
+```
+
+Files require SLURM-valid content; the extension alone does not make a script valid.
