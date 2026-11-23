@@ -18,6 +18,7 @@ from streamlit_cookies_controller import CookieController
 from molecule_viewer import MOLECULE_EXTENSIONS, render_molecule_viewer
 from molecule_builder import molecule_builder_page
 from aces_connection import connect_aces, LOGIN_HOST as ACES_LOGIN_HOST
+from calculation_builder import calculation_builder_page
 
 st.set_page_config(page_title='HPC Student Workspace', page_icon='🧪', layout='wide')
 
@@ -449,6 +450,7 @@ def _actions_menu(key_prefix):
     with st.popover('⚡ Actions', use_container_width=True):
         for label, page in [('📁 Files', 'File Explorer'),
                             ('🧪 Molecule builder', 'Molecule Builder'),
+                            ('🧬 New calculation', 'New Calculation'),
                             ('🚀 Submit simulation', 'Submit Simulation'),
                             ('📊 Job monitor', 'Job Monitor'),
                             ('📄 Job logs', 'Job Logs'),
@@ -582,6 +584,7 @@ def file_manager():
             st.divider()
             st.markdown('**Workspace**')
             for label, page in [('🧪 Molecule builder', 'Molecule Builder'),
+                            ('🧬 New calculation', 'New Calculation'),
                                 ('🚀 Submit simulation', 'Submit Simulation'),
                                 ('📊 Job monitor', 'Job Monitor'),
                                 ('📄 Job logs', 'Job Logs'),
@@ -1028,6 +1031,8 @@ if view == 'File Explorer':
     file_manager()
 elif view == 'Molecule Builder':
     molecule_builder_page(sftp_connection, checked_new_path, checked_remote_path, safe_child, show_error)
+elif view == 'New Calculation':
+    calculation_builder_page(sftp_connection, checked_remote_path, checked_new_path, config, active_partitions, show_error, _navigate)
 elif view == 'Submit Simulation':
     submit_job()
 elif view == 'Job Monitor':
