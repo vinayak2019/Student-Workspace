@@ -36,7 +36,7 @@ LOGIN_HOST = config('B2_LOGIN_HOST', 'bridges2.psc.edu')
 DATA_HOST = config('B2_DATA_HOST', 'data.bridges2.psc.edu')
 ROOT_TEMPLATE = config('B2_WORKSPACE_ROOT', '/ocean/projects/PROJECT_ID/{username}')
 KNOWN_HOSTS = config('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
-ACES_ROOT_TEMPLATE = config('ACES_WORKSPACE_ROOT', '/scratch/user/{username}')
+ACES_ROOT_TEMPLATE = config('ACES_WORKSPACE_ROOT', '/scratch/group/p.che230117.000/{username}')
 ACES_PARTITIONS = [x.strip() for x in config('ACES_PARTITIONS', 'cpu,gpu').split(',') if x.strip()]
 MAX_UPLOAD_MB = int(config('B2_MAX_UPLOAD_MB', '100'))
 ALLOWED_PARTITIONS = [x.strip() for x in config('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
@@ -281,6 +281,50 @@ def ssh_command(args, cwd=None):
         return output.strip()
     finally:
         ssh.close()
+
+
+def ensure_aces_student_workspace(sftp, username, root_template):
+    """Create only the authenticated student's own folder under an existing group path.
+
+    The parent group folder must exist and permit this user to create a child.
+    Never create or modify an arbitrary hierarchy in response to a login.
+    """
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}', username) or username in ('.', '..'):
+        raise ValueError('Invalid ACES username for a workspace folder.')
+    if root_template.count('{username}') != 1:
+        raise ValueError('ACES_WORKSPACE_ROOT must contain exactly one {username} placeholder.')
+    parent_template = posixpath.dirname(root_template)
+    if posixpath.basename(root_template) != '{username}' or '{' in parent_template or '}' in parent_template:
+        raise ValueError('ACES_WORKSPACE_ROOT must end with /{username}.')
+    parent = posixpath.normpath(parent_template)
+    if not parent.startswith('/') or parent == '/':
+        raise ValueError('Invalid ACES group folder.')
+    parent_real = sftp.normalize(parent)
+    if not stat.S_ISDIR(sftp.stat(parent_real).st_mode):
+        raise ValueError('Configured ACES group path is not a folder.')
+    target = posixpath.join(parent_real, username)
+    try:
+        info = sftp.lstat(target)
+    except FileNotFoundError:
+        try:
+            sftp.mkdir(target, mode=0o700)
+        except OSError as exc:
+            # If another login created it concurrently, verify its type below.
+            try:
+                sftp.lstat(target)
+            except OSError:
+                raise PermissionError(
+                    'Cannot create your ACES workspace. Ask the group administrator to '
+                    'grant folder-creation permission under ' + parent_real
+                ) from exc
+    info = sftp.lstat(target)
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError('Your ACES workspace path already exists but is not a folder.')
+    # Refuse to follow a symlink to a different filesystem location.
+    real_target = sftp.normalize(target)
+    if real_target != target:
+        raise ValueError('Your ACES workspace resolves outside the expected location.')
+    return target
 
 
 def sftp_connection():
@@ -895,18 +939,13 @@ def login_screen():
                 credentials = dict(private_key=private_file.getvalue(),
                                    certificate=cert_file.getvalue().decode('utf-8'),
                                    passphrase=passphrase or None)
-                root = posixpath.normpath(ACES_ROOT_TEMPLATE.format(username=username))
-                if not root.startswith('/') or root == '/':
-                    st.error('Invalid ACES workspace configuration.'); return
                 try:
                     ssh = connect_aces(username, credentials['private_key'], credentials['certificate'],
                                        config('ACES_KNOWN_HOSTS', ''), credentials['passphrase'])
                     try:
                         sftp = ssh.open_sftp()
                         try:
-                            root = sftp.normalize(root)
-                            if not stat.S_ISDIR(sftp.stat(root).st_mode):
-                                raise ValueError('ACES workspace is not a folder.')
+                            root = ensure_aces_student_workspace(sftp, username, ACES_ROOT_TEMPLATE)
                         finally:
                             sftp.close()
                     finally:
