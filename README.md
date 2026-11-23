@@ -115,3 +115,13 @@ new driver and ESP flag to obtain ESP coloring.
 created calculation folders still contain their old driver, so they must be
 recreated or their files explicitly updated. No new Python dependencies are
 required beyond the existing PySCF environment on ACES.
+
+### Animated XYZ vibrational modes (viewer update)
+
+The 3D viewer now detects concatenated multi-frame XYZ files such as
+`vibration_mode_001.xyz` produced by `chem_sim.py`. It uses 3Dmol.js
+`addModelsAsFrames` and offers Play/Pause, Previous/Next, frame scrubbing,
+2–20 frames/second and loop playback. Files named `vibration_mode_*.xyz`
+autoplay. Ordinary one-frame XYZ files remain static. Replacing
+`molecule_viewer.py` is sufficient for an existing deployed application;
+no additional Python packages or SSH configuration are required.

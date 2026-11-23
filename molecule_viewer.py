@@ -13,6 +13,44 @@ FORMAT_MAP = {'.pdb': 'pdb', '.sdf': 'sdf', '.cif': 'cif', '.mol2': 'mol2', '.xy
 CUBE_EXTENSIONS = {'.cube', '.cub'}
 
 
+def count_xyz_frames(data: str) -> int:
+    """Count complete XYZ records; reject inconsistent or truncated trajectories."""
+    lines = data.splitlines()
+    index = 0
+    frames = 0
+    atoms_first = None
+    while index < len(lines):
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        if index >= len(lines):
+            break
+        try:
+            atoms = int(lines[index].strip())
+        except ValueError as exc:
+            raise ValueError(f'Invalid XYZ atom count at line {index + 1}') from exc
+        if atoms < 1 or atoms > 100000:
+            raise ValueError('Invalid XYZ atom count')
+        if atoms_first is None:
+            atoms_first = atoms
+        if atoms != atoms_first:
+            raise ValueError('XYZ frames contain different numbers of atoms')
+        if index + 2 + atoms > len(lines):
+            raise ValueError('XYZ trajectory contains a truncated frame')
+        for line in lines[index + 2:index + 2 + atoms]:
+            parts = line.split()
+            if len(parts) < 4:
+                raise ValueError('Malformed XYZ coordinate line')
+            try:
+                [float(t) for t in parts[1:4]]
+            except ValueError as exc:
+                raise ValueError('Invalid XYZ coordinates') from exc
+        index += atoms + 2
+        frames += 1
+        if frames > 2000:
+            raise ValueError('XYZ trajectory exceeds 2,000 frames')
+    return frames
+
+
 def render_molecule_viewer(structure_text: str, filename: str,
                            cube_text: str | None = None, cube_filename: str | None = None,
                            esp_text: str | None = None) -> None:
@@ -24,6 +62,14 @@ def render_molecule_viewer(structure_text: str, filename: str,
     if is_cube and cube_text is None:
         cube_text = structure_text
     has_cube = cube_text is not None
+    nframes = 1
+    if ext == '.xyz':
+        try:
+            nframes = count_xyz_frames(structure_text)
+        except ValueError as exc:
+            st.error(f'Invalid XYZ file: {exc}')
+            return
+    is_trajectory = ext == '.xyz' and nframes > 1
     st.markdown('#### 🧬 3D molecular viewer')
     first = st.columns([2, 1.3, 1.2], vertical_alignment='bottom')
     with first[0]:
@@ -63,7 +109,12 @@ def render_molecule_viewer(structure_text: str, filename: str,
             else:
                 st.caption('Orbital colors denote wavefunction phase, not electrostatic charge. Open electron_density.cube with esp.cube in the same folder for an ESP-colored density surface.')
 
+    if is_trajectory:
+        st.caption(f'Animation detected: {nframes} XYZ frames. Playback controls appear above the 3D molecule.')
+
     payload = {
+        'frames': nframes,
+        'filename': filename,
         'structure': base64.b64encode(structure_text.encode('utf-8')).decode('ascii'),
         'format': FORMAT_MAP[ext],
         'cube': base64.b64encode(cube_text.encode('utf-8')).decode('ascii') if has_cube else None,
@@ -82,11 +133,16 @@ def render_molecule_viewer(structure_text: str, filename: str,
 .toolbar button{cursor:pointer}.toolbar button:hover{background:#e5efff}#viewer{height:535px;width:100%;position:relative;background:#fff}
 #status{padding:9px 12px;border-top:1px solid #dfe3e9;background:#fafbfd;min-height:36px}
 #history{padding:0 12px 8px;color:#536172;background:#fafbfd;min-height:22px}
+#playback{display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 11px;background:#eff6ff;border-bottom:1px solid #cbd5e1}
+#playback button,#playback select{font:inherit;border:1px solid #bbc6d4;border-radius:5px;padding:5px 10px;background:#fff;cursor:pointer}
+#playback input[type=range]{flex:1;min-width:170px;accent-color:#2563eb}
+#framecount{min-width:95px;font-variant-numeric:tabular-nums;color:#334155}
 </style></head><body>
 <div class="toolbar"><label>Measure <select id="measure"><option value="off">Off</option><option value="distance">Distance (2 atoms)</option><option value="angle">Angle (3 atoms)</option><option value="dihedral">Dihedral (4 atoms)</option></select></label>
 <label><input id="numbers" type="checkbox"/> Atom numbers</label>
 <label><input id="elements" type="checkbox"/> Element labels</label>
 <button id="reset">Clear measurements</button><button id="fit">Fit structure</button></div>
+<div id="playback"><button id="play" type="button">▶ Play</button><button id="prev" type="button" title="Previous frame">◀</button><button id="next" type="button" title="Next frame">▶</button><input id="frame" type="range" min="0" value="0" step="1" aria-label="Animation frame"/><span id="framecount">Frame 1 / 1</span><label>Speed <select id="fps"><option value="2">2 fps</option><option value="5">5 fps</option><option value="10" selected>10 fps</option><option value="15">15 fps</option><option value="20">20 fps</option></select></label><label><input id="loop" type="checkbox" checked/> Loop</label></div>
 <div id="viewer"></div><div id="status">Drag to rotate · Scroll to zoom · Right-drag to pan. Choose a measurement and click atoms in sequence.</div><div id="history"></div>
 <script>
 'use strict';
@@ -106,8 +162,8 @@ try {
  if(!window.$3Dmol)throw Error('3Dmol.js could not load. Check access to jsDelivr.');
  const viewer=$3Dmol.createViewer($('viewer'),{backgroundColor:cfg.bg==='Black'?'#101827':cfg.bg==='Light blue'?'#edf5ff':'white'});
  const text=decode(cfg.structure);
- const model=viewer.addModel(text,cfg.format);
- const atoms=model.selectedAtoms({});
+ const model=cfg.frames>1?viewer.addModelsAsFrames(text,cfg.format):viewer.addModel(text,cfg.format);
+ let atoms=model.selectedAtoms({});
  if(!atoms.length)throw Error('No atoms could be parsed from the structure.');
  if(cfg.style==='Ball and stick')viewer.setStyle({},{stick:{radius:.15},sphere:{scale:.28}});
  else if(cfg.style==='Sticks')viewer.setStyle({},{stick:{radius:.18}});
@@ -129,7 +185,7 @@ try {
    else if(cfg.surfaceMode==='Electron density (positive values)')spec(cfg.isovalue,'#247cc1');
    else spec(-cfg.isovalue,'#d65753');
  }
- const atIndex=new Map(atoms.map((a,i)=>[a,i+1]));
+ let atIndex=new Map(atoms.map((a,i)=>[a,i+1]));
  let picks=[], marks=[], lines=[], measurementHistory=[];
  let labels=[];
  function updateLabels(){labels.forEach(x=>viewer.removeLabel(x));labels=[];
@@ -161,7 +217,41 @@ try {
  viewer.render();}
  viewer.setClickable({},true,(atom)=>pickAtom(atom));
  viewer.zoomTo();viewer.render();if(cfg.spin)viewer.spin('y',.5);
+ if(cfg.frames>1){
+   $('playback').style.display='flex';
+   $('frame').max=String(cfg.frames-1);
+   let frame=0,playing=false,timer=null,busy=false;
+   function setPlaybackUI(){ $('frame').value=String(frame);$('framecount').textContent=`Frame ${frame+1} / ${cfg.frames}`;}
+   async function showFrame(index){
+     if(busy)return;
+     busy=true;
+     try{
+       frame=Math.max(0,Math.min(cfg.frames-1,index));
+       // Measurements are geometry-dependent; don't keep stale annotations.
+       if(picks.length || marks.length || lines.length || measurementHistory.length)clear();
+       await viewer.setFrame(frame);
+       atoms=model.selectedAtoms({});
+       atIndex=new Map(atoms.map((a,i)=>[a,i+1]));
+       if($('numbers').checked || $('elements').checked)updateLabels();
+       viewer.render();
+       setPlaybackUI();
+     }catch(err){pause();$('status').textContent='Animation failed: '+err.message;console.error(err)}
+     finally{busy=false}
+   }
+   function pause(){if(timer!==null){clearInterval(timer);timer=null}playing=false;$('play').textContent='▶ Play'}
+   function advance(){if(frame>=cfg.frames-1){if($('loop').checked){showFrame(0)}else{pause()}}else{showFrame(frame+1)}}
+   function play(){if(playing)return;playing=true;$('play').textContent='⏸ Pause';timer=setInterval(advance,1000/Number($('fps').value))}
+   $('play').addEventListener('click',()=>playing?pause():play());
+   $('prev').addEventListener('click',()=>{pause();showFrame(frame-1)});
+   $('next').addEventListener('click',()=>{pause();showFrame(frame+1)});
+   $('frame').addEventListener('input',()=>{pause();showFrame(Number($('frame').value))});
+   $('fps').addEventListener('change',()=>{if(playing){pause();play()}});
+   window.addEventListener('pagehide',pause);
+   setPlaybackUI();
+   if(/vibration_mode_/i.test(cfg.filename||''))play();
+ }
+
 } catch(e){$('status').textContent='Unable to render: '+e.message;console.error(e)}
 </script></body></html>'''.replace('__CONFIG__',settings)
     components.html(html,height=650,scrolling=False)
-    st.caption('Measurements use displayed Cartesian coordinates (Å and degrees). CIF symmetry-related bonds across cell boundaries may require an expanded structure. Cube surfaces are rendered locally in the browser using 3Dmol.js.')
+    st.caption('Multi-frame XYZ files support Play/Pause, frame scrubbing and playback speed. Vibrational trajectories loop in the browser; no compute-node resources are used for animation. Measurements use displayed Cartesian coordinates (Å and degrees). CIF symmetry-related bonds across cell boundaries may require an expanded structure. Cube surfaces are rendered locally in the browser using 3Dmol.js.')
