@@ -17,8 +17,9 @@ from streamlit_cookies_controller import CookieController
 
 from molecule_viewer import MOLECULE_EXTENSIONS, render_molecule_viewer
 from molecule_builder import molecule_builder_page
+from aces_connection import connect_aces, LOGIN_HOST as ACES_LOGIN_HOST
 
-st.set_page_config(page_title='Bridges-2 Student Workspace', page_icon='🧪', layout='wide')
+st.set_page_config(page_title='HPC Student Workspace', page_icon='🧪', layout='wide')
 
 def config(name, default=None):
     """Read Streamlit Community Cloud Secrets, then environment, then default."""
@@ -35,6 +36,8 @@ LOGIN_HOST = config('B2_LOGIN_HOST', 'bridges2.psc.edu')
 DATA_HOST = config('B2_DATA_HOST', 'data.bridges2.psc.edu')
 ROOT_TEMPLATE = config('B2_WORKSPACE_ROOT', '/ocean/projects/PROJECT_ID/{username}')
 KNOWN_HOSTS = config('B2_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
+ACES_ROOT_TEMPLATE = config('ACES_WORKSPACE_ROOT', '/scratch/user/{username}')
+ACES_PARTITIONS = [x.strip() for x in config('ACES_PARTITIONS', 'cpu,gpu').split(',') if x.strip()]
 MAX_UPLOAD_MB = int(config('B2_MAX_UPLOAD_MB', '100'))
 ALLOWED_PARTITIONS = [x.strip() for x in config('B2_PARTITIONS', 'RM-shared,RM').split(',') if x.strip()]
 MAX_DOWNLOAD_MB = int(config('B2_MAX_DOWNLOAD_MB', '100'))
@@ -111,6 +114,7 @@ def restore_login():
         if entry is None:
             return False
         credentials = entry.copy()
+    st.session_state.cluster = 'bridges2'
     st.session_state.username = credentials['username']
     st.session_state.password = credentials['password']
     st.session_state.root = credentials['root']
@@ -225,6 +229,30 @@ h2,h3 {font-size:1.12rem!important;}
 </style>""", unsafe_allow_html=True)
 
 
+def active_cluster():
+    return st.session_state.get('cluster', 'bridges2')
+
+
+def cluster_label():
+    return 'ACES' if active_cluster() == 'aces' else 'Bridges-2'
+
+
+def active_partitions():
+    return ACES_PARTITIONS if active_cluster() == 'aces' else ALLOWED_PARTITIONS
+
+
+def connect_active(role='login'):
+    if active_cluster() == 'aces':
+        credentials = st.session_state.get('aces_credentials')
+        if not credentials:
+            raise RuntimeError('ACES certificate is missing. Sign in to ACES again.')
+        return connect_aces(st.session_state.username, credentials['private_key'],
+                            credentials['certificate'], config('ACES_KNOWN_HOSTS', ''),
+                            credentials.get('passphrase'))
+    host = LOGIN_HOST if role == 'login' else DATA_HOST
+    return connect(host, st.session_state.username, st.session_state.password)
+
+
 def connect(host, username, password):
     client = paramiko.SSHClient()
     try:
@@ -239,7 +267,7 @@ def connect(host, username, password):
 
 
 def ssh_command(args, cwd=None):
-    ssh = connect(LOGIN_HOST, st.session_state.username, st.session_state.password)
+    ssh = connect_active('login')
     try:
         cmd = ' '.join(shlex.quote(str(a)) for a in args)
         if cwd is not None:
@@ -256,7 +284,7 @@ def ssh_command(args, cwd=None):
 
 
 def sftp_connection():
-    ssh = connect(DATA_HOST, st.session_state.username, st.session_state.password)
+    ssh = connect_active('data')
     try:
         sftp = ssh.open_sftp()
         return ssh, sftp
@@ -268,7 +296,7 @@ def sftp_connection():
 def ensure_within_root(path):
     """Normalize a remote absolute pathname and apply the optional project boundary."""
     if not isinstance(path, str) or not path.startswith('/') or '\x00' in path:
-        raise ValueError('Enter an absolute Bridges-2 path beginning with /.')
+        raise ValueError('Enter an absolute path beginning with /.')
     candidate = posixpath.normpath(path)
     if not ALLOW_OTHER_PATHS:
         root = st.session_state.root
@@ -284,7 +312,7 @@ def safe_child(parent, name):
 
 
 def checked_remote_path(sftp, path):
-    """Resolve paths on PSC; enforce project boundary when restricted."""
+    """Resolve remote paths; enforce project boundary when restricted."""
     path = ensure_within_root(path)
     resolved = sftp.normalize(path)
     if not ALLOW_OTHER_PATHS:
@@ -331,7 +359,7 @@ def _human_size(size):
 
 
 def _navigate(path):
-    """Validate a folder through PSC SFTP before committing navigation history."""
+    """Validate a folder through SFTP before committing navigation history."""
     path = ensure_within_root(path)
     ssh, sftp = sftp_connection()
     try:
@@ -449,7 +477,7 @@ def file_manager():
     with header_left:
         st.title('📁 Files')
     with header_right:
-        st.caption('Bridges-2  •  ' + st.session_state.username)
+        st.caption(cluster_label() + '  •  ' + st.session_state.username)
 
     buttons = st.columns([.8, .8, .7, 1.3, 1.45, 1.55, 3.6], vertical_alignment='center')
     with buttons[0]:
@@ -534,7 +562,7 @@ def file_manager():
     with address_cols[1]:
         if st.session_state.get('address_edit', False):
             with st.form('navigate_path_form', border=False):
-                entered = st.text_input('Bridges-2 path', key='path_address_input',
+                entered = st.text_input('Full path', key='path_address_input',
                                         label_visibility='collapsed',
                                         placeholder='/ocean/projects/...')
                 submitted = st.form_submit_button('Go')
@@ -709,7 +737,7 @@ def file_actions(item, current):
                 show_error(exc)
 
     with st.expander('🗑 Delete file'):
-        st.warning('Deleting a file from PSC cannot be undone here.')
+        st.warning('Deleting a remote file cannot be undone here.')
         confirmed = st.checkbox(f'I want to permanently delete {selected}', key=f'confirm_{current}_{selected}')
         if st.button('Delete selected file', disabled=not confirmed, type='secondary'):
             try:
@@ -727,7 +755,7 @@ def file_actions(item, current):
 
 def submit_job():
     st.subheader('🚀 Submit Simulation')
-    st.caption('Choose a previously prepared .sh, .sbatch, .slurm, or .job script. Jobs run on compute nodes under your PSC allocation.')
+    st.caption('Choose a .sh, .sbatch, .slurm, or .job script. Jobs run on compute nodes under the active cluster allocation.')
     try:
         ssh, sftp = sftp_connection()
         try:
@@ -743,7 +771,7 @@ def submit_job():
         return
     with st.form('submit_form'):
         script = st.selectbox('Job script', names)
-        partition = st.selectbox('Partition', ALLOWED_PARTITIONS)
+        partition = st.selectbox('Partition', ['Use script default'] + active_partitions())
         allocation = st.text_input('Allocation ID (optional)', help='Use the SLURM allocation granted by PSC, if required.')
         submit = st.form_submit_button('Submit job')
     if submit:
@@ -756,7 +784,9 @@ def submit_job():
                 checked_remote_path(sftp, path)
             finally:
                 sftp.close(); ssh.close()
-            cmd = ['sbatch', '--parsable', '--partition', partition]
+            cmd = ['sbatch', '--parsable']
+            if partition != 'Use script default':
+                cmd.extend(['--partition', partition])
             if allocation:
                 cmd += ['--account', allocation]
             cmd += ['--', script]
@@ -792,34 +822,11 @@ def jobs_page():
                 st.error('Enter a valid Job ID.')
             else:
                 try:
-                    # StdOut / StdErr are NOT valid sacct --format fields on PSC.
-                    # Accounting information is available even after the job leaves squeue.
-                    accounting = ssh_command([
-                        'sacct', '-j', job_id, '--noheader', '--parsable2', '-X',
-                        '--format=JobID,JobName,Partition,State,Elapsed,ExitCode,Start,End,NodeList'
-                    ])
-                    if accounting:
-                        headers = ['Job ID', 'Name', 'Partition', 'State', 'Elapsed',
-                                   'Exit code', 'Started', 'Ended', 'Nodes']
-                        records = [dict(zip(headers, line.split('|', len(headers)-1)))
-                                   for line in accounting.splitlines() if line.strip()]
-                        st.dataframe(records, use_container_width=True, hide_index=True)
-                    else:
-                        st.info('No accounting record found for this job.')
-
-                    # scontrol can report the output/error paths for active and
-                    # recently retained jobs; historical jobs may be purged.
+                    st.code(ssh_command(['sacct', '-j', job_id, '--format=JobID,JobName,State,Elapsed,ExitCode', '-P']))
                     try:
-                        details = ssh_command(['scontrol', 'show', 'job', '-o', job_id])
-                        for field, title in [('WorkDir', 'Working folder'),
-                                             ('StdOut', 'Standard output'),
-                                             ('StdErr', 'Standard error')]:
-                            match = re.search(r'(?:^|\s)' + field + r'=(\S+)', details)
-                            if match:
-                                st.text(f'{title}: {match.group(1)}')
+                        st.code(ssh_command(['scontrol', 'show', 'job', job_id]))
                     except Exception:
-                        st.caption('SLURM no longer has live job details. For completed jobs, '
-                                   'open the saved .out/.err files through Files or Job Logs.')
+                        st.caption('Live job information is no longer available.')
                 except Exception as exc:
                     show_error(exc)
 
@@ -858,52 +865,107 @@ def logs_page():
 
 
 def login_screen():
-    st.title('🧪 Bridges-2 Student Workspace')
-    st.write('Sign in using your PSC account. Optional refresh persistence uses a short-lived browser token, not a browser-stored PSC password.')
-    if 'PROJECT_ID' in ROOT_TEMPLATE:
-        st.warning('Administrator: configure B2_WORKSPACE_ROOT before enabling student access.')
-        st.stop()
-    with st.form('login'):
-        username = st.text_input('PSC username')
-        password = st.text_input('PSC password', type='password')
-        keep_signed_in = st.checkbox('Keep me signed in after refreshing (up to 4 hours)', value=False)
-        submitted = st.form_submit_button('Connect to Bridges-2')
-    if submitted:
-        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username):
-            st.error('Enter a valid PSC username.'); return
-        root = posixpath.normpath(ROOT_TEMPLATE.format(username=username))
-        if not root.startswith('/') or root == '/':
-            st.error('Invalid configured workspace.'); return
-        try:
-            client = connect(LOGIN_HOST, username, password)
-            client.close()
-            client, sftp = connect(DATA_HOST, username, password), None
+    st.title('🧪 HPC Student Workspace')
+    cluster = st.radio('Connect to', ['Bridges-2 (PSC)', 'ACES (Texas A&M)'], horizontal=True,
+                       key='cluster_choice')
+    if cluster.startswith('ACES'):
+        st.info('ACES uses a temporary SSH certificate and a jump host, not your PSC password. '
+                'For the safest option, use the official ACES portal.')
+        st.link_button('Open official ACES portal', 'https://portal-aces.hprc.tamu.edu')
+        with st.expander('Direct SSH in this app (advanced; requires approval)', expanded=False):
+            st.warning('This uploads an SSH private key to the Streamlit Community Cloud server. '
+                       'Use only if TAMU and your institution approve this architecture. '
+                       'The key stays in this Streamlit session, is not written to disk, and is lost on refresh.')
+            st.markdown('Generate **id_aces_tamu** and **id_aces_tamu-cert.pub** using the '
+                        '[ACES sshca utility](https://hprc.tamu.edu/kb/User-Guides/ACES/). '
+                        'The certificate is temporary; renew it through the ACES portal when it expires.')
+            with st.form('aces_login'):
+                username = st.text_input('ACES username')
+                private_file = st.file_uploader('id_aces_tamu — SSH private key', type=None)
+                cert_file = st.file_uploader('id_aces_tamu-cert.pub — SSH certificate', type=['pub'])
+                passphrase = st.text_input('Private-key passphrase (if present)', type='password')
+                submitted = st.form_submit_button('Connect to ACES')
+            if submitted:
+                if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username):
+                    st.error('Enter a valid ACES username.'); return
+                if not private_file or not cert_file:
+                    st.error('Both private key and certificate files are required.'); return
+                if private_file.size > 64 * 1024 or cert_file.size > 64 * 1024:
+                    st.error('SSH key and certificate must each be under 64 KB.'); return
+                credentials = dict(private_key=private_file.getvalue(),
+                                   certificate=cert_file.getvalue().decode('utf-8'),
+                                   passphrase=passphrase or None)
+                root = posixpath.normpath(ACES_ROOT_TEMPLATE.format(username=username))
+                if not root.startswith('/') or root == '/':
+                    st.error('Invalid ACES workspace configuration.'); return
+                try:
+                    ssh = connect_aces(username, credentials['private_key'], credentials['certificate'],
+                                       config('ACES_KNOWN_HOSTS', ''), credentials['passphrase'])
+                    try:
+                        sftp = ssh.open_sftp()
+                        try:
+                            root = sftp.normalize(root)
+                            if not stat.S_ISDIR(sftp.stat(root).st_mode):
+                                raise ValueError('ACES workspace is not a folder.')
+                        finally:
+                            sftp.close()
+                    finally:
+                        ssh.close()
+                    st.session_state.cluster = 'aces'
+                    st.session_state.aces_credentials = credentials
+                    st.session_state.username = username
+                    st.session_state.root = root
+                    st.session_state.current = root
+                    st.session_state.folder_history = []
+                    st.session_state.view = 'File Explorer'
+                    st.success('Connected to ACES. Click Open workspace.')
+                except Exception as exc:
+                    show_error(exc)
+    else:
+        st.write('Sign in using your PSC account. Optional refresh persistence uses a short-lived browser token, not a browser-stored PSC password.')
+        if 'PROJECT_ID' in ROOT_TEMPLATE:
+            st.warning('Administrator: configure B2_WORKSPACE_ROOT before enabling student access.')
+            st.stop()
+        with st.form('login'):
+            username = st.text_input('PSC username')
+            password = st.text_input('PSC password', type='password')
+            keep_signed_in = st.checkbox('Keep me signed in after refreshing (up to 4 hours)', value=False)
+            submitted = st.form_submit_button('Connect to Bridges-2')
+        if submitted:
+            if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username):
+                st.error('Enter a valid PSC username.'); return
+            root = posixpath.normpath(ROOT_TEMPLATE.format(username=username))
+            if not root.startswith('/') or root == '/':
+                st.error('Invalid configured workspace.'); return
             try:
-                sftp = client.open_sftp()
-                root = sftp.normalize(root)
-                if not stat.S_ISDIR(sftp.stat(root).st_mode):
-                    raise ValueError('Project path is not a directory.')
-            finally:
-                if sftp: sftp.close()
+                client = connect(LOGIN_HOST, username, password)
                 client.close()
-            st.session_state.username = username
-            st.session_state.password = password
-            st.session_state.root = root
-            st.session_state.current = root
-            st.session_state.folder_history = []
-            st.session_state.view = 'File Explorer'
-            if keep_signed_in:
-                remember_login(username, password, root)
-            if keep_signed_in:
-                st.success('Connected. Select **Open workspace** below to finish saving this browser sign-in.')
-            else:
+                client = connect(DATA_HOST, username, password)
+                try:
+                    sftp = client.open_sftp()
+                    try:
+                        root = sftp.normalize(root)
+                        if not stat.S_ISDIR(sftp.stat(root).st_mode):
+                            raise ValueError('Project path is not a folder.')
+                    finally:
+                        sftp.close()
+                finally:
+                    client.close()
+                st.session_state.cluster = 'bridges2'
+                st.session_state.username = username
+                st.session_state.password = password
+                st.session_state.root = root
+                st.session_state.current = root
+                st.session_state.folder_history = []
+                st.session_state.view = 'File Explorer'
+                if keep_signed_in:
+                    remember_login(username, password, root)
                 st.success('Connected. Select **Open workspace** to continue.')
-        except Exception as exc:
-            show_error(exc)
+            except Exception as exc:
+                show_error(exc)
     if 'username' in st.session_state:
         if st.button('Open workspace', type='primary', key='finish_login'):
             st.rerun()
-    st.caption('PSC may require additional authentication or a supported access method. If password authentication is unavailable, use PSC Open OnDemand while an approved SSH authentication integration is configured.')
 
 
 if 'username' not in st.session_state:
@@ -935,9 +997,10 @@ elif view == 'Job Logs':
     logs_page()
 else:
     st.subheader('⚙️ Account')
-    st.write('PSC username:', st.session_state.username)
-    st.write('Login host:', LOGIN_HOST)
-    st.write('Data transfer host:', DATA_HOST)
+    st.write('Cluster:', cluster_label())
+    st.write('Username:', st.session_state.username)
+    st.write('Login host:', ACES_LOGIN_HOST if active_cluster() == 'aces' else LOGIN_HOST)
+    st.write('File transfer:', 'Via ACES login SSH/SFTP tunnel' if active_cluster() == 'aces' else DATA_HOST)
     st.code(st.session_state.root)
     if st.button('View my Unix groups'):
         try:

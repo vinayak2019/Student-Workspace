@@ -1,152 +1,47 @@
-# Bridges-2 Student Workspace (Streamlit MVP)
+# HPC Student Workspace — Bridges-2 + ACES
 
-A teaching-focused front end to PSC Bridges-2. The app logs in as the **student's own PSC identity**. It does not create PSC accounts, bypass authentication, or grant directory permissions.
+A Windows-inspired browser file manager, molecular editor/viewer, and SLURM job manager for PSC Bridges-2 and Texas A&M ACES.
 
-## Included
+## Deploy to Streamlit Community Cloud
 
-- Per-student login through SSH password authentication (if allowed by PSC)
-- Rooted project file explorer, mkdir, text preview, uploads and downloads
-- Separate SSH (login host) and SFTP (PSC designated DTN) connections
-- Submission of existing SLURM batch scripts, selecting partition and optional allocation
-- `squeue` current jobs, `sacct` 7-day history and job details
-- Read text logs in the selected folder
+Commit `app.py`, `aces_connection.py`, `molecule_viewer.py`, `molecule_builder.py`, and `requirements.txt` to the same GitHub directory. Launch using `app.py` as the entrypoint.
 
-## Configure
+### Bridges-2 settings
 
-1. Confirm deployment, credential-handling, authentication, and transfer method with PSC and your institution's IT/security team. OnDemand at https://ondemand.bridges2.psc.edu is the PSC-supported alternative.
-2. Every student needs a PSC account, valid project membership and access to a workspace path. Set `B2_WORKSPACE_ROOT` to their **actual** accessible path. Pattern `/ocean/projects/YOUR_PROJECT_GROUP/{username}` is only an example; it does not create directories. If you want students restricted to a shared course folder, configure one appropriately, and use Unix permissions to protect student data. This app's path restriction is a UI convenience, **not** a substitute for OS permissions.
-3. On the server running Streamlit, establish and verify the SSH host keys of both `bridges2.psc.edu` and `data.bridges2.psc.edu` out-of-band against trustworthy PSC fingerprints. Populate `~/.ssh/known_hosts`. The app rejects unknown/changed host keys. Never automatically trust keys received on first connection.
-4. Use Python 3.10+, install dependencies: `pip install -r requirements.txt`.
-5. Export the environment variables from `.env.example` using your deployment secrets/config (Streamlit does not automatically load `.env`). **Replace** `YOUR_PROJECT_GROUP` and check partition access.
-6. Run `streamlit run app.py` on your own approved web server behind HTTPS, authentication/network controls, and a reverse proxy configured to prevent caching and request logging of secrets. Avoid a public multi-tenant community-hosted instance.
-7. Set server and reverse proxy upload sizes to match `B2_MAX_UPLOAD_MB`; Streamlit defaults may differ.
+Keep your previously configured Streamlit Secrets (`B2_WORKSPACE_ROOT`, `PSC_KNOWN_HOSTS`, etc.). No change is needed to existing PSC host-key entries.
 
-## Security and limitations
+### ACES settings
 
-**MVP, not production hardened.** Student PSC passwords are kept in Streamlit session memory for repeated SSH/SFTP requests; they are not saved to local files or a database. This has residual security risks (server operators/process memory, long-lived sessions, compromises, and browser/websocket exposure). Require HTTPS and session timeout, obtain PSC approval, and replace password handling with an approved federated or delegated mechanism for production. Some PSC auth flows (including interactive challenge/MFA) may not work with Paramiko password login. Never ask students to share credentials with instructors. PSC policies govern account usage and workload submissions.
+The normal and safest ACES access method is the official portal: https://portal-aces.hprc.tamu.edu
 
-The application makes remote shell calls using fixed commands and shell quoting, not user-submitted shell strings. SFTP path normalization checks help prevent following symlinks outside the configured directory. System permissions remain authoritative. Review upload overwrite policy before deployment: currently uploading a same-named file overwrites it. Restrict server access, use session-timeout and audit logging excluding secrets, and test simultaneous student sessions. This MVP downloads files into app memory, limited by configuration; use PSC's approved transfer tooling for large files. The `squeue`/`sacct` views are **per user** and the accounting history is limited to seven days in the interface; historical records and actual log retention are governed by PSC. Logs are discovered in the current folder only.
-
-The script's chosen partition is passed to `sbatch` and can override the partition inside the script. SBATCH allocation ID remains optional. Users must verify partitions, walltimes and allocation charging. This app does not provide a simulation-template builder, a file editor, global log search, scheduler cancellation, or desktop windows; those are appropriate next versions.
-
-**Important**: PSC says transfers should use `data.bridges2.psc.edu` and be initiated from a machine outside the login nodes. Deploy this web app **outside Bridges-2 login nodes**. Do not run compute-intensive analyses on the Streamlit server or Bridges-2 login nodes.
-
-Documentation: https://www.psc.edu/resources/bridges-2/user-guide/
-
-
-## Streamlit Community Cloud (`share.streamlit.io`) configuration
-
-Deploy `app.py` from your GitHub repository. Open the app's **Settings → Secrets** and add:
+For advanced *direct ACES SSH access through the app* (only with approval from TAMU and your campus IT), set:
 
 ```toml
-B2_WORKSPACE_ROOT = "/ocean/projects/YOUR_PROJECT_GROUP/{username}"
-B2_LOGIN_HOST = "bridges2.psc.edu"
-B2_DATA_HOST = "data.bridges2.psc.edu"
-B2_PARTITIONS = "RM-shared,RM"
-PSC_KNOWN_HOSTS = """
-bridges2.psc.edu ssh-ed25519 REPLACE_WITH_VERIFIED_BASE64_PUBLIC_HOST_KEY
- data.bridges2.psc.edu ssh-ed25519 REPLACE_WITH_VERIFIED_BASE64_PUBLIC_HOST_KEY
+ACES_WORKSPACE_ROOT = "/scratch/user/{username}"
+ACES_PARTITIONS = "cpu,gpu"
+ACES_KNOWN_HOSTS = """
+[aces-jump.hprc.tamu.edu]:8822 ssh-ed25519 REPLACE_WITH_VERIFIED_JUMP_HOST_PUBLIC_KEY
+login.aces.hprc.tamu.edu ssh-ed25519 REPLACE_WITH_VERIFIED_LOGIN_HOST_PUBLIC_KEY
 """
 ```
 
-Remove the leading space before `data.bridges2.psc.edu` if copying the template.
-**The placeholders are not valid keys.** Obtain candidate host-key lines using
-`ssh-keyscan -t ed25519 bridges2.psc.edu data.bridges2.psc.edu` from a trusted
-machine; independently confirm the SHA256 fingerprints with PSC support before
-putting those lines in secrets. Never paste usernames, passwords, or private SSH
-keys into GitHub. Restart/reboot the app after saving Secrets.
+These are **examples only**. The listed key types are placeholders; use exactly the algorithms and full host-key lines confirmed independently by TAMU HPRC. Never copy unverified `ssh-keyscan` output into a production app. A port-8822 entry must be written in OpenSSH known_hosts form `[hostname]:8822`. If your verified host uses another key algorithm, use that algorithm and value.
 
-This release refuses unknown or mismatching SSH host keys. Network egress on
-TCP port 22 and PSC's SSH login policy must also allow Streamlit Community Cloud
-connections. Not every PSC authentication method works through password-only
-Paramiko; this is an MVP and **is not suitable for public class-wide deployment
-until the authentication/security model is approved by PSC and campus IT**.
+Login to the ACES portal, open **Utilities → sshca**, and download both `id_aces_tamu` (private key) and `id_aces_tamu-cert.pub` (signed public certificate). ACES documentation currently says the certificate lasts 49 hours. The app does not create, renew, or store certificates permanently. Upload both files when connecting through the app. The connection tunnels through `aces-jump.hprc.tamu.edu:8822` to `login.aces.hprc.tamu.edu:22`.
 
-## Desktop-style File Explorer
+**Security:** Uploading a private key to Streamlit Community Cloud is sensitive and should not be enabled for students without express institutional/HPRC authorization. The files remain in Streamlit session memory for direct connections; they are not written to disk, cookies, or the server credential vault. A page reload means uploading the temporary credentials again. Closing/logging out removes them from Streamlit session state. The app server and Streamlit operators must still be trusted to handle secrets appropriately. A self-hosted server or authorized federation is preferable for routine class use.
 
-The updated File Explorer has folder tiles, direct click-to-open navigation,
-project breadcrumbs, grid/list toggle, a folder-name filter, multi-file upload,
-folder creation, file preview, download, rename, and confirmation-gated file deletion.
-These operations are performed over SFTP against PSC's data-transfer host and
-are restricted to the configured root. A folder opens on one click rather than
-requiring a browser double-click. Folder deletion and drag-and-drop folder moves
-are intentionally not included.
+Network access to port **8822** from Streamlit Community Cloud must be available, which has not been verified; the official portal is the reliable alternative.
 
-**Cloud update:** Replace `app.py` in your GitHub repository, retain the existing
-Streamlit secrets (especially the *verified* `PSC_KNOWN_HOSTS` entries), then
-reboot the application in share.streamlit.io. Python package requirements are
-unchanged. The application has not been integration-tested against a live PSC account.
+### Features
 
+- Select cluster at sign-in (Bridges-2 or ACES).
+- File browser, editable path bar, uploads/downloads and folders.
+- Molecular builder/viewer and cube surfaces.
+- `.sh`, `.sbatch`, `.slurm`, `.job` submitted with `sbatch`, monitored via `squeue`/`sacct`.
+- ACES uses per-user scratch root; other paths remain dependent on file permissions and optional `B2_ALLOW_OTHER_PATHS` setting.
+- Cluster-specific partition selections; `Use script default` respects `#SBATCH --partition` in a script.
 
-### File icon display
+No scientific computation should be run on login nodes. Job submission only uses `sbatch`.
 
-Use the **Icon size** dropdown in the Files toolbar to select Small, Medium, Large, or Extra large. Large is the default. File sizes are not displayed in the explorer grid, list, or selected-file details.
-
-## 3D molecular viewer
-
-The Files screen now offers **Open 3D molecule viewer** for `.pdb`, `.sdf`, `.cif`, `.mol2`, and `.xyz`. The viewer supports ball-and-stick, sticks, space-filling, lines, and protein cartoon display; white/dark/light-blue backgrounds; automatic rotation; and optional CIF unit-cell display when the structure provides the relevant information. Rotate by dragging, zoom with the scroll wheel, and pan with right-drag.
-
-**Deploy both `app.py` and `molecule_viewer.py` together** in the same GitHub folder. No new pip dependencies are needed: the viewer loads 3Dmol.js from jsDelivr in the student's browser. The browser therefore needs external HTTPS access to that CDN. Preview is limited to 8 MB per molecular file to protect web-app memory; large trajectories should be downloaded and viewed locally. This is visualization, not a chemically validated structure conversion, and guessed bonds (especially XYZ) and CIF unit-cell/symmetry representations should be checked before chemical interpretation. Files are fetched through the existing authenticated SFTP session; the viewer does not send them to a structure database.
-
-## Molecule Builder (2D to 3D)
-
-Choose **Actions → Molecule builder**. Draw a small organic molecule in the Ketcher 2D editor, click **Generate 3D molecule**, inspect the result in the 3Dmol.js viewer, and download XYZ/SDF or **Save in current folder** on Bridges-2. SDF retains bond orders/connectivity; XYZ contains coordinates and element labels only. RDKit generates one 3D conformer with ETKDG and optionally minimizes using MMFF94 (fallback UFF). This does **not** execute on Bridges-2 or submit a SLURM simulation. Force-field energies are not quantum energies and are not suitable for direct comparison across unlike molecules. Complex, metallic, periodic, flexible, or highly strained structures might fail or need scientific review. Generated structures include explicit hydrogens.
-
-**Deployment:** Add `molecule_builder.py` to the same GitHub directory as `app.py` and `molecule_viewer.py`. Commit the included `requirements.txt` with `streamlit-ketcher` and `rdkit`; Streamlit Community Cloud will install these when redeployed. Your PSC Secrets remain unchanged. The 2D component is served by the Streamlit app; the 3D viewer uses 3Dmol.js via a browser CDN. No changes to PSC directories or user privileges are required.
-
-**Security:** The editor and quick optimization run on the Streamlit hosting instance, not a Bridges-2 compute node. The builder caps molecular size. Server-side PSC credential handling remains an MVP and should be approved by PSC and campus IT before classroom deployment.
-
-## Optional persistent login after browser refresh
-
-Check **Keep me signed in after refreshing (up to 4 hours)** on the PSC sign-in screen.
-The browser receives only a cryptographically random cookie (Secure, SameSite=Strict), not the PSC password. A matching credential record is held in the Streamlit server process memory for at most four hours and removed at expiry/logout. A browser refresh should restore the session while that server process remains active. Reload may briefly show the login form while the cookie component initializes. Streamlit Community Cloud server restarts, idle shutdown, replications or cache clearing invalidate the server-held record and require logging in again.
-
-**Security notice:** This optional feature increases exposure of PSC passwords by storing them in a shared server-side memory cache for a limited time, and a stolen cookie grants access until revoked/expired. Do not use this for an unapproved student-wide service. Obtain PSC/institutional approval and preferably replace PSC password capture with an approved delegated/OIDC authentication + short-lived server-side SSH credentials design. The feature is opt-in and disabled by default.
-
-Dependencies include `streamlit-cookies-controller`. Redeploy the updated `requirements.txt` alongside `app.py`.
-
-
-### Browser refresh sign-in: two-stage fix (October 2026)
-
-The initial code called `st.rerun()` immediately after `CookieController.set()`, which could interrupt delivery of the browser-side cookie operation. The updated login requires clicking **Open workspace** after successful authentication; this gives the component an opportunity to run in the browser before rerunning.
-
-**This is not a guaranteed persistent-authentication solution on Streamlit Community Cloud.** Browser privacy settings, component iframe limitations, Streamlit's cookie-forwarding behavior, or a server restart can still prevent restoration. If the user is prompted to sign in after refresh, inspect the browser's Application/Storage > Cookies for `b2_workspace_session` and check whether it is present after pressing Open workspace. Do not share its value or any PSC credentials. If the cookie exists but restoration fails, the in-process session record may be unavailable or the cookie may be omitted from Streamlit's request. For reliable institutional use, switch to PSC-approved delegated authentication and a persistent server-side session architecture on an approved host.
-
-
-## Measurements and Gaussian cube visualization (October 2026)
-
-Select a PDB, SDF, CIF, MOL2, XYZ, CUBE or CUB file in Files, then click **Open 3D molecule viewer**.
-
-- Measurement toolbar: choose **Distance** (2 atoms), **Angle** (3 atoms), or **Dihedral** (4 atoms) and click atoms in order. Click **Clear measurements** to remove markers and measurement history. Results use Cartesian coordinates in Å and degrees.
-- Toggle **Atom numbers** and **Element labels** to display atom labels; large structures are limited to 1,500 labels to keep the browser responsive.
-- Open `.cube` or `.cub` files directly to show the atoms recorded in the Gaussian cube file and render electron-density (positive field) or molecular-orbital isosurfaces (positive and negative signed phases). Choose isovalue and opacity.
-- Structure previews are limited to 8 MiB and cube files to 16 MiB; heavy cubes can overwhelm a student's browser even within the limit. Files are read from PSC over SFTP and rendered in the student's browser with 3Dmol.js.
-
-**Scientific cautions:** The meaning and units of the cube's scalar field depend on the program that generated it. Positive/negative orbital phases are not electric charge; an electron-density cube should use the positive-only display. Atom numbers refer to the viewer's parsed atom order, which might differ from original crystallographic labels. Geometry on periodic structures is measured in the displayed coordinates, not automatically using minimum-image periodic boundaries. Cube formats with multiple orbital datasets or nonstandard variants may require conversion to a conventional single-field Gaussian cube.
-
-No additional Python dependencies or PSC Secrets changes are needed. No live PSC or browser GPU test was performed.
-
-## Windows-style path/address navigation
-
-The file explorer shows the full current PSC path above the files. Click **This PC › Project** or the pencil icon to edit the address, enter an absolute PSC path (e.g. `/ocean/projects/...` or `/jet/home/yourusername`), and click **Go**. The path must exist, be a folder, and be accessible to the current PSC user over SFTP. Back and Home continue to work; Home returns to the configured project folder.
-
-By default `B2_ALLOW_OTHER_PATHS = "true"` enables this requested feature. To lock students within their configured project workspace (including symlink checks), add `B2_ALLOW_OTHER_PATHS = "false"` to Streamlit Secrets. The app never elevates PSC account permissions. If allowing access outside the project, make sure this is appropriate for your course and institution's security requirements.
-
-## Using `.sh` files for SLURM jobs
-
-The Submit Simulation screen now detects `.sh` files in the currently opened folder, alongside `.sbatch`, `.slurm`, and `.job`. These are submitted using `sbatch -- script.sh`, not executed directly on the login host. `.sh` files must contain a valid batch script with appropriate `#SBATCH` directives, including a shebang, an allocation (if necessary), requested time and resources, and the intended simulation command. The GUI partition selection overrides the partition specified in the script. The `.sh` icon is shown as a job script in File Explorer.
-
-Example:
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=test_simulation
-#SBATCH --time=00:10:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-
-module purge
-echo "Running on $(hostname)"
-```
-
-Files require SLURM-valid content; the extension alone does not make a script valid.
+Sources: https://hprc.tamu.edu/kb/User-Guides/ACES/ and https://hprc.tamu.edu/kb/User-Guides/ACES/Batch/
