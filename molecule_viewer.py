@@ -14,7 +14,8 @@ CUBE_EXTENSIONS = {'.cube', '.cub'}
 
 
 def render_molecule_viewer(structure_text: str, filename: str,
-                           cube_text: str | None = None, cube_filename: str | None = None) -> None:
+                           cube_text: str | None = None, cube_filename: str | None = None,
+                           esp_text: str | None = None) -> None:
     """Draw atoms, measure geometry on clicks, and show signed cube isosurfaces."""
     ext = PurePosixPath(filename).suffix.lower()
     if ext not in FORMAT_MAP:
@@ -36,21 +37,38 @@ def render_molecule_viewer(structure_text: str, filename: str,
     mode = 'Orbitals (positive and negative phases)'
     isovalue = 0.03
     opacity = 0.65
+    esp_range = 0.05
     if has_cube:
         with st.expander('Electron density / orbital surfaces', expanded=True):
             a,b,c = st.columns([2,1,1])
             with a:
-                mode = st.selectbox('Cube interpretation', ['Orbitals (positive and negative phases)', 'Electron density (positive values)', 'Signed field (negative values)', 'Hide isosurface'], key='cube_mode_'+filename)
+                modes = (['Electrostatic potential mapped on density'] if esp_text is not None else []) + [
+                    'Orbitals (positive and negative phases)', 'Electron density (positive values)',
+                    'Signed field (negative values)', 'Hide isosurface']
+                mode = st.selectbox('Cube interpretation', modes, key='cube_mode_'+filename)
             with b:
-                isovalue = st.number_input('Absolute isovalue', min_value=0.0001, max_value=20.0, value=0.03, step=0.01, format='%.4f', key='cube_iso_'+filename)
+                default_iso = 0.001 if esp_text is not None else (0.001 if 'density' in filename.lower() else 0.03)
+                isovalue = st.number_input('Absolute isovalue (e/Bohr³ for density)',
+                    min_value=0.0001, max_value=20.0, value=default_iso, step=0.001, format='%.4f',
+                    key='cube_iso_'+filename)
             with c:
-                opacity = st.slider('Opacity', 0.1, 1.0, 0.65, step=0.05, key='cube_op_'+filename)
-            st.caption('Blue/red show the sign of a scalar field, not electrostatic charge. For an electron-density cube, select the positive-only surface. Units and meaning depend on the generating program.')
+                opacity = st.slider('Opacity', 0.1, 1.0, 0.85 if esp_text is not None else 0.65,
+                                    step=0.05, key='cube_op_'+filename)
+            if esp_text is not None:
+                esp_range = st.number_input('ESP color saturation (± Hartree/e)', min_value=0.001,
+                    max_value=2.0, value=0.05, step=0.01, format='%.3f',
+                    key='esp_range_'+filename,
+                    help='Red is negative potential, blue positive potential. Increasing the range reduces saturation.')
+                st.caption('ESP map: red = negative potential, blue = positive potential, white = near zero. Surface is an electron-density contour.')
+            else:
+                st.caption('Orbital colors denote wavefunction phase, not electrostatic charge. Open electron_density.cube with esp.cube in the same folder for an ESP-colored density surface.')
 
     payload = {
         'structure': base64.b64encode(structure_text.encode('utf-8')).decode('ascii'),
         'format': FORMAT_MAP[ext],
         'cube': base64.b64encode(cube_text.encode('utf-8')).decode('ascii') if has_cube else None,
+        'esp': base64.b64encode(esp_text.encode('utf-8')).decode('ascii') if esp_text else None,
+        'espRange': esp_range,
         'style': display, 'bg': background, 'spin': spin, 'cell': show_cell,
         'surfaceMode': mode, 'isovalue': isovalue, 'opacity': opacity,
     }
@@ -101,7 +119,13 @@ try {
    const cube=decode(cfg.cube);
    const vol=new $3Dmol.VolumeData(cube,'cube');
    const spec=(value,color)=>viewer.addIsosurface(vol,{isoval:value,color:color,opacity:cfg.opacity,smoothness:2});
-   if(cfg.surfaceMode==='Orbitals (positive and negative phases)'){spec(cfg.isovalue,'#2872d0');spec(-cfg.isovalue,'#dd584f')}
+   if(cfg.surfaceMode==='Electrostatic potential mapped on density'){
+     if(!cfg.esp)throw Error('Matching ESP cube not loaded.');
+     const espvol=new $3Dmol.VolumeData(decode(cfg.esp),'cube');
+     viewer.addIsosurface(vol,{isoval:cfg.isovalue,opacity:cfg.opacity,smoothness:3,
+       voldata:espvol,volscheme:{gradient:'rwb',min:-cfg.espRange,max:cfg.espRange}});
+   }
+   else if(cfg.surfaceMode==='Orbitals (positive and negative phases)'){spec(cfg.isovalue,'#2872d0');spec(-cfg.isovalue,'#dd584f')}
    else if(cfg.surfaceMode==='Electron density (positive values)')spec(cfg.isovalue,'#247cc1');
    else spec(-cfg.isovalue,'#d65753');
  }

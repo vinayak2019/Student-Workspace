@@ -109,23 +109,45 @@ def save_orbitals(mf, out, cfg):
                 target = out / f'{channel}_{label}_{i+1}.cube'
                 logging.info('Generating %s (%s orbital %s)', target, channel, i+1)
                 cubegen.orbital(mol, str(target), coefficients[:,i], nx=grid,ny=grid,nz=grid)
-    if cfg.get('electron_density_cube', True):
-        save_density(mf, out, cfg)
+    if cfg.get('electron_density_cube', True) or cfg.get('esp_cube', False):
+        save_electrostatic_fields(mf, out, cfg)
 
 
 
-def save_density(mf, out, cfg):
-    """Write total electron density for restricted or unrestricted wavefunctions."""
+def save_electrostatic_fields(mf, out, cfg):
+    """Write matched electron-density / electrostatic-potential cube grids.
+
+    The potential is V_nuc - V_elec (atomic units), i.e. the
+    electrostatic potential experienced by a positive test charge.
+    Both cubes use the same molecule, box margin and grid dimensions.
+    """
     from pyscf.tools import cubegen
     grid = int(cfg.get('cube_grid', 65))
     if not 24 <= grid <= 100:
         raise ValueError('cube_grid must be between 24 and 100')
+    density_enabled = bool(cfg.get('electron_density_cube', True))
+    esp_enabled = bool(cfg.get('esp_cube', False))
+    if not (density_enabled or esp_enabled):
+        return
+    # A density cube is required to construct the ESP-mapped isosurface.
+    if esp_enabled:
+        density_enabled = True
     dm = mf.make_rdm1()
     if isinstance(dm, (tuple, list)) or (isinstance(dm, np.ndarray) and dm.ndim == 3):
-        dm = np.asarray(dm).sum(axis=0)  # alpha + beta spin populations
-    logging.info('Generating total electron density cube')
-    cubegen.density(mf.mol, str(out / 'electron_density.cube'), dm,
+        dm = np.asarray(dm).sum(axis=0)  # total spin-summed density
+    if density_enabled:
+        logging.info('Generating electron-density cube')
+        cubegen.density(mf.mol, str(out / 'electron_density.cube'), dm,
+                        nx=grid, ny=grid, nz=grid)
+    if esp_enabled:
+        logging.info('Generating electrostatic-potential cube (Vnuc - Velec)')
+        cubegen.mep(mf.mol, str(out / 'esp.cube'), dm,
                     nx=grid, ny=grid, nz=grid)
+
+
+# Backward-compatible entry point for existing calculation scripts.
+def save_density(mf, out, cfg):
+    save_electrostatic_fields(mf, out, cfg)
 
 
 def single_point(symbols, coords, cfg, out):
@@ -142,8 +164,8 @@ def single_point(symbols, coords, cfg, out):
     }, indent=2))
     if cfg.get('orbitals', True):
         save_orbitals(mf, out, cfg)
-    elif cfg.get('electron_density_cube', True):
-        save_density(mf, out, cfg)
+    elif cfg.get('electron_density_cube', True) or cfg.get('esp_cube', False):
+        save_electrostatic_fields(mf, out, cfg)
     return mol, mf
 
 def optimize(symbols, coords, cfg, out):
@@ -162,8 +184,8 @@ def optimize(symbols, coords, cfg, out):
     dump_scf_summary(final_mf, out/'orbitals.csv')
     if cfg.get('orbitals', True):
         save_orbitals(final_mf, out, cfg)
-    elif cfg.get('electron_density_cube', True):
-        save_density(final_mf, out, cfg)
+    elif cfg.get('electron_density_cube', True) or cfg.get('esp_cube', False):
+        save_electrostatic_fields(final_mf, out, cfg)
     return final_mol, final_mf
 
 

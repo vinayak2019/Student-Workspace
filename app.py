@@ -693,25 +693,78 @@ def file_manager():
         file_actions(item, current)
 
 
+def _cube_grid_signature(cube_text):
+    """Return grid origin/axes/atoms for matching two cube datasets.
+
+    Comparing the entire grid header prevents mapping an unrelated field
+    onto a molecule simply because the files share a folder.
+    """
+    lines = cube_text.splitlines()
+    if len(lines) < 7:
+        raise ValueError('Cube header is incomplete.')
+    header = lines[2].split()
+    natoms = abs(int(header[0]))
+    if len(header) < 4 or len(lines) < 6 + natoms:
+        raise ValueError('Cube atom list is incomplete.')
+    grid = [header[:4]] + [line.split()[:4] for line in lines[3:6]]
+    cell = []
+    for row in grid:
+        cell.append((int(row[0]), *[float(x) for x in row[1:4]]))
+    atomic = []
+    for line in lines[6:6 + natoms]:
+        values = line.split()
+        atomic.append((int(values[0]), *[float(x) for x in values[2:5]]))
+    return cell, atomic
+
+
+def _grids_match(a, b):
+    (cell_a, atom_a), (cell_b, atom_b) = _cube_grid_signature(a), _cube_grid_signature(b)
+    if len(atom_a) != len(atom_b):
+        return False
+    for aa, bb in zip(cell_a + atom_a, cell_b + atom_b):
+        if aa[0] != bb[0] or any(abs(x-y)>1e-5 for x,y in zip(aa[1:],bb[1:])):
+            return False
+    return True
+
+
 def molecule_preview(path, filename):
-    """Fetch a bounded molecule file through the existing authenticated SFTP channel."""
+    """Fetch a bounded molecular structure and any matching ESP/density pair via SFTP."""
     ssh, sftp = sftp_connection()
     try:
         checked_remote_path(sftp, path)
-        attributes = sftp.stat(path)
         max_bytes = (16 if filename.lower().endswith(('.cube', '.cub')) else 8) * 1024 * 1024
-        if attributes.st_size > max_bytes:
-            st.warning('Structure exceeds the browser preview limit (8 MB for structures, 16 MB for cube files).')
-            return
-        with sftp.open(path, 'rb') as remote:
-            raw = remote.read(max_bytes + 1)
-        if len(raw) > max_bytes:
-            st.warning('Structure exceeds the browser preview limit.')
-            return
-        if b'\x00' in raw:
-            st.error('The structure does not look like a plain-text molecular file.')
-            return
-        render_molecule_viewer(raw.decode('utf-8', errors='replace'), filename)
+
+        def read_text(remote_path, cap):
+            checked_remote_path(sftp, remote_path)
+            if sftp.stat(remote_path).st_size > cap:
+                raise ValueError('Structure or cube exceeds the browser preview limit.')
+            with sftp.open(remote_path, 'rb') as remote:
+                raw = remote.read(cap + 1)
+            if len(raw) > cap or b'\x00' in raw:
+                raise ValueError('Molecule file exceeds preview limit or is not plain text.')
+            return raw.decode('utf-8', errors='replace')
+
+        raw_text = read_text(path, max_bytes)
+        folder = posixpath.dirname(path)
+        lowered = filename.lower()
+        density_path = posixpath.join(folder, 'electron_density.cube')
+        esp_path = posixpath.join(folder, 'esp.cube')
+        # Only auto-pair these exact calculation products. Do not guess that
+        # unrelated cubes belong together.
+        if lowered in ('electron_density.cube', 'esp.cube'):
+            try:
+                density = raw_text if lowered == 'electron_density.cube' else read_text(density_path, 16*1024*1024)
+                potential = raw_text if lowered == 'esp.cube' else read_text(esp_path, 16*1024*1024)
+                if _grids_match(density, potential):
+                    st.info('Electrostatic potential detected. Density surface will be colored by ESP values.')
+                    render_molecule_viewer(density, 'electron_density.cube', esp_text=potential)
+                    return
+                st.warning('Density and ESP cube grids do not match. Showing the selected cube without ESP mapping.')
+            except OSError:
+                st.caption('Open both electron_density.cube and esp.cube from the same calculation to show ESP mapping.')
+            except ValueError as exc:
+                st.warning(f'ESP mapping not available: {exc}')
+        render_molecule_viewer(raw_text, filename)
     finally:
         sftp.close()
         ssh.close()

@@ -149,6 +149,9 @@ def calculation_builder_page(sftp_connection, checked_remote_path, checked_new_p
             spin = st.number_input('2S (unpaired electrons)', value=0, min_value=0, max_value=10, step=1)
         orbitals = st.checkbox('Generate HOMO/LUMO cubes', value=(mode != 'scan'), disabled=mode == 'scan')
         density = st.checkbox('Generate electron-density cube', value=(mode != 'scan'), disabled=mode == 'scan')
+        esp = st.checkbox('Generate electrostatic potential (ESP) colors on electron density',
+                          value=(mode != 'scan'), disabled=mode == 'scan',
+                          help='Creates matched electron_density.cube and esp.cube. ESP is a molecular electrostatic potential, not electron density.')
         cube_grid = st.slider('Cube resolution (points per axis)', 24, 100, 60, disabled=mode == 'scan')
         opt_first = st.checkbox('Optimize before frequencies', value=True, disabled=mode != 'frequency')
         max_opt = st.number_input('Maximum optimization steps', 10, 300, 80, 10, disabled=mode not in ('frequency', 'optimize'))
@@ -190,7 +193,8 @@ def calculation_builder_page(sftp_connection, checked_remote_path, checked_new_p
             spec = {'task':mode, 'xyz':'input.xyz', 'output':'results', 'method':method,
                     'basis':basis, 'charge':int(charge), 'spin':int(spin),
                     'orbitals':bool(orbitals) and mode != 'scan',
-                    'electron_density_cube':bool(density) and mode != 'scan',
+                    'electron_density_cube':(bool(density) or bool(esp)) and mode != 'scan',
+                    'esp_cube':bool(esp) and mode != 'scan',
                     'cube_grid':int(cube_grid), 'max_opt_steps':int(max_opt)}
             if mode == 'frequency':
                 spec.update(optimize_first=bool(opt_first), vibration_frames=16,

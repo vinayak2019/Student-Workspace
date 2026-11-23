@@ -71,3 +71,47 @@ ACES_CHEM_PYTHON = "/scratch/group/p.che230117.000/chemistry-venv/bin/python"
 The path above is an example and **does not mean that environment already exists**. Set an actual working path. Use `B2_CHEM_PYTHON` for Bridges-2. A job fails with an actionable log message if the environment is missing. Partitions come from existing `ACES_PARTITIONS`/`B2_PARTITIONS` Secrets; verify they are suitable for your allocation. No scientific calculations run on Streamlit Cloud or login nodes.
 
 The current package has syntax tests only; live PySCF/SLURM execution and file creation still require testing on ACES.
+
+## Electrostatic potential (ESP) mapped onto electron density (November 2026)
+
+**Calculation:** Actions → New Calculation → select a single-point energy,
+geometry optimization, or frequency job. Check **Generate electrostatic
+potential (ESP) colors on electron density**, choose the cube resolution,
+then **Create calculation files**. This writes `config.json` with
+`"electron_density_cube": true` and `"esp_cube": true`. Next use the
+existing **Submit Simulation** action to submit `run_calculation.sh`.
+No simulation is launched on the Streamlit server.
+
+The PySCF driver outputs (inside the calculation's `results/` folder):
+
+- `electron_density.cube` — total electron density in e/Bohr^3
+- `esp.cube` — molecular electrostatic potential from nuclear minus electronic
+  contributions, in atomic units (Hartree per unit positive charge)
+- HOMO/LUMO cube files where enabled
+
+The **viewer** detects `esp.cube` when `electron_density.cube` is selected,
+or vice versa, in the same results folder. It confirms that the cubes share
+identical grids and atomic positions before using electron density as the
+isosurface geometry and ESP as the red–white–blue coloring field.
+Default density isovalue is `0.001` e/Bohr^3, and ESP color saturation is
+`±0.05` atomic units. Change them to explore the surfaces; an identical color
+scale is needed for meaningful comparisons between molecules.
+
+**Scientific interpretation:** Red = negative ESP (relatively favorable to a
+positive test charge); blue = positive ESP; white = near zero ESP. Neither
+ESP colors nor orbital phase colors are a direct visualization of electrons
+as colored particles. Calculations are for **isolated molecules**, not
+periodic crystals. PySCF's ESP generation can be expensive for large cube
+grids: start with small molecules and 40–60 points per axis.
+
+For compatibility, the driver only emits ESP when `esp_cube` is enabled.
+Legacy student calculations without that flag behave as before. Any existing
+results folder that has just an electron-density cube must be rerun with the
+new driver and ESP flag to obtain ESP coloring.
+
+**Deployment:** Replace `app.py`, `calculation_builder.py`,
+`molecule_viewer.py`, and `chem_sim.py` in the Streamlit GitHub repository.
+`chem_sim.py` is copied into each newly created calculation folder. Previously
+created calculation folders still contain their old driver, so they must be
+recreated or their files explicitly updated. No new Python dependencies are
+required beyond the existing PySCF environment on ACES.
